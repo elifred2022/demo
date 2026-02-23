@@ -8,9 +8,10 @@ import FormVentas from "./FormVentas";
 
 interface ListVentasProps {
   ventas: VentaList[];
+  onMutate?: () => void;
 }
 
-export default function ListVentas({ ventas }: ListVentasProps) {
+export default function ListVentas({ ventas, onMutate }: ListVentasProps) {
   const router = useRouter();
   const [mostrarForm, setMostrarForm] = useState(false);
   const [ventaEditando, setVentaEditando] = useState<VentaList | null>(null);
@@ -57,7 +58,7 @@ export default function ListVentas({ ventas }: ListVentasProps) {
         const data = await res.json();
         throw new Error(data.error || "Error al eliminar");
       }
-      router.refresh();
+      onMutate?.() ?? router.refresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error al eliminar");
     } finally {
@@ -84,7 +85,7 @@ export default function ListVentas({ ventas }: ListVentasProps) {
           </button>
         </div>
         {mostrarForm && (
-          <FormVentas onCerrar={cerrarForm} venta={ventaEditando} />
+          <FormVentas onCerrar={cerrarForm} venta={ventaEditando} onMutate={onMutate} />
         )}
         <div className="mb-4">
           <input

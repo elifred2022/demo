@@ -8,9 +8,10 @@ import FormArticulos from "./FormArticulos";
 
 interface ListaArticulosProps {
   articulos: Articulo[];
+  onMutate?: () => void;
 }
 
-export default function ListaArticulos({ articulos }: ListaArticulosProps) {
+export default function ListaArticulos({ articulos, onMutate }: ListaArticulosProps) {
   const router = useRouter();
   const [mostrarForm, setMostrarForm] = useState(false);
   const [articuloEditando, setArticuloEditando] = useState<Articulo | null>(null);
@@ -54,7 +55,7 @@ export default function ListaArticulos({ articulos }: ListaArticulosProps) {
         const data = await res.json();
         throw new Error(data.error || "Error al eliminar");
       }
-      router.refresh();
+      onMutate?.() ?? router.refresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Error al eliminar");
     } finally {
@@ -84,6 +85,7 @@ export default function ListaArticulos({ articulos }: ListaArticulosProps) {
           <FormArticulos
             onCerrar={cerrarForm}
             articulo={articuloEditando}
+            onMutate={onMutate}
           />
         )}
         <div className="mb-4">

@@ -6,10 +6,21 @@ import {
   reponerStockArticulo,
 } from "@/lib/google-sheets";
 
+// Evita caché en Vercel/Next.js para que siempre se lean datos frescos de Google Sheets
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export async function GET() {
   try {
     const ventas = await getVentas();
-    return NextResponse.json({ ventas });
+    return NextResponse.json(
+      { ventas },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      }
+    );
   } catch (error) {
     console.error("Error al obtener ventas:", error);
     return NextResponse.json(

@@ -16,9 +16,10 @@ interface ArticuloEncontrado {
 interface FormVentasProps {
   onCerrar: () => void;
   venta: VentaList | null;
+  onMutate?: () => void;
 }
 
-export default function FormVentas({ onCerrar, venta }: FormVentasProps) {
+export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProps) {
   const router = useRouter();
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
@@ -169,7 +170,7 @@ export default function FormVentas({ onCerrar, venta }: FormVentasProps) {
       }
 
       onCerrar();
-      router.refresh();
+      onMutate?.() ?? router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {

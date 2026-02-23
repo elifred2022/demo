@@ -1,7 +1,5 @@
-import ListVentas from "@/components/ventas/ListVentas";
-import { getVentas } from "@/lib/google-sheets";
+import ListVentasLoader from "@/components/ventas/ListVentasLoader";
 
-export default async function ListaVentasPage() {
-  const ventas = await getVentas();
-  return <ListVentas ventas={ventas} />;
+export default function ListaVentasPage() {
+  return <ListVentasLoader />;
 }

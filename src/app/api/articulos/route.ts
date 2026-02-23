@@ -1,5 +1,33 @@
 import { NextResponse } from "next/server";
-import { insertarArticulo, articuloExistePorCodbarra } from "@/lib/google-sheets";
+import {
+  getArticulos,
+  insertarArticulo,
+  articuloExistePorCodbarra,
+} from "@/lib/google-sheets";
+
+// Evita caché en Vercel/Next.js para que siempre se lean datos frescos de Google Sheets
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export async function GET() {
+  try {
+    const articulos = await getArticulos();
+    return NextResponse.json(
+      { articulos },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      }
+    );
+  } catch (error) {
+    console.error("Error al obtener artículos:", error);
+    return NextResponse.json(
+      { error: "Error al cargar los artículos" },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: Request) {
   try {

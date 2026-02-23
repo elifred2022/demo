@@ -7,9 +7,10 @@ import type { Articulo } from "@/lib/google-sheets";
 interface FormArticulosProps {
   onCerrar: () => void;
   articulo?: Articulo | null;
+  onMutate?: () => void;
 }
 
-export default function FormArticulos({ onCerrar, articulo }: FormArticulosProps) {
+export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArticulosProps) {
   const router = useRouter();
   const esEdicion = !!articulo;
   const [enviando, setEnviando] = useState(false);
@@ -156,7 +157,7 @@ export default function FormArticulos({ onCerrar, articulo }: FormArticulosProps
       }
 
       onCerrar();
-      router.refresh();
+      onMutate?.() ?? router.refresh();
       setFormData({ codbarra: "", idarticulo: "", nombre: "", descripcion: "", precio: "", stock: "" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");

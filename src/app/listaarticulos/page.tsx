@@ -1,7 +1,5 @@
-import ListaArticulos from "@/components/articulos/ListaArticulos";
-import { getArticulos } from "@/lib/google-sheets";
+import ListaArticulosLoader from "@/components/articulos/ListaArticulosLoader";
 
-export default async function ListaArticulosPage() {
-  const articulos = await getArticulos();
-  return <ListaArticulos articulos={articulos} />;
+export default function ListaArticulosPage() {
+  return <ListaArticulosLoader />;
 }

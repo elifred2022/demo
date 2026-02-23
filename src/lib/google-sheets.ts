@@ -38,11 +38,34 @@ function getSpreadsheetId(): string {
   return match ? match[1] : id;
 }
 
+function parsePrivateKey(raw: string | undefined): string {
+  if (!raw?.trim()) return '';
+  let key = raw
+    .replace(/\\n/g, '\n')        // literales \n
+    .replace(/\r\n/g, '\n')       // Windows line endings
+    .replace(/\r/g, '\n')         // Mac antiguo
+    .trim();
+  // Quita comillas externas si Vercel las añadió
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).replace(/\\n/g, '\n');
+  }
+  return key;
+}
+
 export async function getGoogleSheetsClient() {
+  const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
+  const privateKey = parsePrivateKey(process.env.GOOGLE_PRIVATE_KEY);
+
+  if (!clientEmail || !privateKey) {
+    throw new Error(
+      'Faltan credenciales de Google. Configura GOOGLE_SERVICE_ACCOUNT_EMAIL y GOOGLE_PRIVATE_KEY en las variables de entorno de Vercel.'
+    );
+  }
+
   const auth = new google.auth.GoogleAuth({
     credentials: {
-      client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-      private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+      client_email: clientEmail,
+      private_key: privateKey,
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
