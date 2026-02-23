@@ -30,6 +30,30 @@ export default function Home() {
               Modulo ventas
             </Link>
           </div>
+          <div className="flex flex-col gap-4 sm:flex-row mt-8 pt-8 border-t border-slate-100">
+            <Link
+              href="/listaproveedores"
+              className="btn-primary w-full sm:w-auto sm:min-w-[180px]"
+            >
+              Módulo proveedores
+            </Link>
+          </div>
+          <div className="flex flex-col gap-4 sm:flex-row mt-8 pt-8 border-t border-slate-100">
+            <Link
+              href="/listacompras"
+              className="btn-primary w-full sm:w-auto sm:min-w-[180px]"
+            >
+              Módulo compras
+            </Link>
+          </div>
+          <div className="flex flex-col gap-4 sm:flex-row mt-8 pt-8 border-t border-slate-100">
+            <Link
+              href="/listaclientes"
+              className="btn-primary w-full sm:w-auto sm:min-w-[180px]"
+            >
+              Módulo clientes
+            </Link>
+          </div>
         </div>
       </main>
     </div>

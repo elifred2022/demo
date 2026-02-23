@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { VentaList } from "@/lib/google-sheets";
+import type { CompraList, Proveedor } from "@/lib/google-sheets";
 
 interface ArticuloEncontrado {
   id?: string;
@@ -13,26 +13,34 @@ interface ArticuloEncontrado {
   stock: number;
 }
 
-interface FormVentasProps {
+interface FormComprasProps {
   onCerrar: () => void;
-  venta: VentaList | null;
+  compra: CompraList | null;
+  proveedores: Proveedor[];
   onMutate?: () => void;
 }
 
-export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProps) {
+export default function FormCompras({
+  onCerrar,
+  compra,
+  proveedores,
+  onMutate,
+}: FormComprasProps) {
   const router = useRouter();
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [codbarraBuscar, setCodbarraBuscar] = useState("");
   const [buscando, setBuscando] = useState(false);
-  const [articuloEncontrado, setArticuloEncontrado] = useState<ArticuloEncontrado | null>(null);
+  const [articuloEncontrado, setArticuloEncontrado] =
+    useState<ArticuloEncontrado | null>(null);
   const fechaHoy = () => new Date().toISOString().split("T")[0];
   const [formData, setFormData] = useState({
-    fecha: venta?.fecha ?? fechaHoy(),
-    idarticulo: venta?.idarticulo ?? "",
-    nombre: venta?.nombre ?? "",
-    cantidad: venta?.cantidad?.toString() ?? "",
-    total: venta?.total?.toString() ?? "",
+    fecha: compra?.fecha ?? fechaHoy(),
+    proveedor: compra?.proveedor ?? "",
+    idarticulo: compra?.idarticulo ?? "",
+    articulo: compra?.articulo ?? "",
+    cantidad: compra?.cantidad?.toString() ?? "",
+    precio: compra?.precio?.toString() ?? "",
   });
 
   const buscarArticulo = useCallback(async (codbarra?: string, id?: string) => {
@@ -58,8 +66,8 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
     setFormData((prev) => ({
       ...prev,
       idarticulo: idArt,
-      nombre: art.nombre ?? "",
-      total: prev.cantidad ? String(Number(prev.cantidad) * art.precio) : prev.total,
+      articulo: art.nombre ?? "",
+      precio: art.precio?.toString() ?? prev.precio,
     }));
   }, []);
 
@@ -77,58 +85,61 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
   };
 
   useEffect(() => {
-    if (venta) {
+    if (compra) {
       setFormData({
-        fecha: venta.fecha ?? "",
-        idarticulo: venta.idarticulo ?? "",
-        nombre: venta.nombre ?? "",
-        cantidad: venta.cantidad?.toString() ?? "",
-        total: venta.total?.toString() ?? "",
+        fecha: compra.fecha ?? fechaHoy(),
+        proveedor: compra.proveedor ?? "",
+        idarticulo: compra.idarticulo ?? "",
+        articulo: compra.articulo ?? "",
+        cantidad: compra.cantidad?.toString() ?? "",
+        precio: compra.precio?.toString() ?? "",
       });
       setArticuloEncontrado({
-        idarticulo: venta.idarticulo,
+        idarticulo: compra.idarticulo,
         codbarra: "",
-        nombre: venta.nombre,
-        precio: venta.precioUnitario,
+        nombre: compra.articulo,
+        precio: compra.precio,
         stock: 0,
       });
     } else {
       setFormData({
         fecha: fechaHoy(),
+        proveedor: "",
         idarticulo: "",
-        nombre: "",
+        articulo: "",
         cantidad: "",
-        total: "",
+        precio: "",
       });
       setArticuloEncontrado(null);
       setCodbarraBuscar("");
     }
-  }, [venta]);
+  }, [compra]);
 
   useEffect(() => {
     const id = (formData.idarticulo ?? "").trim();
-    if (!id || venta) return;
-    const idEncontrado = (articuloEncontrado?.idarticulo ?? articuloEncontrado?.id ?? "").trim().toLowerCase();
+    if (!id || compra) return;
+    const idEncontrado = (
+      articuloEncontrado?.idarticulo ?? articuloEncontrado?.id ?? ""
+    )
+      .trim()
+      .toLowerCase();
     if (idEncontrado === id.toLowerCase()) return;
     const t = setTimeout(async () => {
       const art = await buscarArticulo(undefined, id);
       if (art) aplicarArticulo(art);
     }, 400);
     return () => clearTimeout(t);
-  }, [formData.idarticulo, venta, articuloEncontrado?.idarticulo, articuloEncontrado?.id, buscarArticulo, aplicarArticulo]);
-
-  useEffect(() => {
-    if (articuloEncontrado && formData.cantidad) {
-      const cant = parseFloat(formData.cantidad) || 0;
-      setFormData((prev) => ({
-        ...prev,
-        total: String(cant * articuloEncontrado.precio),
-      }));
-    }
-  }, [formData.cantidad, articuloEncontrado]);
+  }, [
+    formData.idarticulo,
+    compra,
+    articuloEncontrado?.idarticulo,
+    articuloEncontrado?.id,
+    buscarArticulo,
+    aplicarArticulo,
+  ]);
 
   const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement>
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     setError("");
     const { name, value } = e.target;
@@ -141,23 +152,22 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
     setEnviando(true);
 
     const cantidad = parseFloat(formData.cantidad) || 0;
-    const total = parseFloat(formData.total) || 0;
-    const precioUnitario = cantidad > 0 ? total / cantidad : 0;
+    const precio = parseFloat(formData.precio) || 0;
 
     const payload = {
       fecha: formData.fecha.trim(),
+      proveedor: formData.proveedor.trim(),
       idarticulo: formData.idarticulo.trim(),
-      nombre: formData.nombre.trim(),
+      articulo: formData.articulo.trim(),
       cantidad,
-      total,
-      precioUnitario,
+      precio,
     };
 
     try {
-      const url = venta
-        ? `/api/ventas/${encodeURIComponent(venta.idventa)}`
-        : "/api/ventas";
-      const method = venta ? "PUT" : "POST";
+      const url = compra
+        ? `/api/compras/${encodeURIComponent(compra.idcompra)}`
+        : "/api/compras";
+      const method = compra ? "PUT" : "POST";
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
@@ -167,7 +177,10 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || (venta ? "Error al actualizar la venta" : "Error al crear la venta"));
+        throw new Error(
+          data.error ||
+            (compra ? "Error al actualizar la compra" : "Error al crear la compra")
+        );
       }
 
       onCerrar();
@@ -185,12 +198,12 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
       onClick={(e) => e.target === e.currentTarget && onCerrar()}
     >
       <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
+        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">
-            {venta ? "Editar venta" : "Nueva venta"}
+            {compra ? "Editar compra" : "Nueva compra"}
           </h2>
           <button
             type="button"
@@ -229,10 +242,34 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
 
           <div>
             <label
+              htmlFor="proveedor"
+              className="mb-1 block text-sm font-medium text-slate-700"
+            >
+              Proveedor <span className="text-red-500">*</span>
+            </label>
+            <select
+              id="proveedor"
+              name="proveedor"
+              required
+              value={formData.proveedor}
+              onChange={handleChange}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <option value="">Seleccionar proveedor</option>
+              {proveedores.map((p) => (
+                <option key={p.idproveedor} value={p.nombre}>
+                  {p.nombre} ({p.idproveedor})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
               htmlFor="codbarra"
               className="mb-1 block text-sm font-medium text-slate-700"
             >
-              Buscar por código de barras
+              Buscar artículo por código de barras
             </label>
             <div className="flex gap-2">
               <input
@@ -240,7 +277,10 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
                 type="text"
                 value={codbarraBuscar}
                 onChange={(e) => setCodbarraBuscar(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleBuscarPorCodbarra())}
+                onKeyDown={(e) =>
+                  e.key === "Enter" &&
+                  (e.preventDefault(), handleBuscarPorCodbarra())
+                }
                 className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 placeholder="Escanear o tipear código de barras"
               />
@@ -276,12 +316,16 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
               <p className="mt-1 text-xs text-slate-500">Buscando artículo…</p>
             )}
             {articuloEncontrado && (
-              <div className="mt-2 rounded-lg bg-sky-50 border border-sky-200 px-3 py-2">
+              <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
                 <p className="text-sm font-medium text-sky-800">
-                  Precio unitario: <span className="font-semibold">{articuloEncontrado.precio.toLocaleString()}</span>
+                  Precio actual:{" "}
+                  <span className="font-semibold">
+                    {articuloEncontrado.precio.toLocaleString()}
+                  </span>
                 </p>
                 <p className="text-sm font-medium text-sky-800">
-                  Stock disponible: <span className="font-semibold">{articuloEncontrado.stock}</span>
+                  Stock actual:{" "}
+                  <span className="font-semibold">{articuloEncontrado.stock}</span>
                 </p>
               </div>
             )}
@@ -289,17 +333,17 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
 
           <div>
             <label
-              htmlFor="nombre"
+              htmlFor="articulo"
               className="mb-1 block text-sm font-medium text-slate-700"
             >
-              Nombre <span className="text-red-500">*</span>
+              Artículo <span className="text-red-500">*</span>
             </label>
             <input
-              id="nombre"
-              name="nombre"
+              id="articulo"
+              name="articulo"
               type="text"
               required
-              value={formData.nombre ?? ""}
+              value={formData.articulo ?? ""}
               onChange={handleChange}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
               placeholder="Nombre del artículo"
@@ -312,14 +356,15 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
                 htmlFor="cantidad"
                 className="mb-1 block text-sm font-medium text-slate-700"
               >
-                Cantidad
+                Cantidad <span className="text-red-500">*</span>
               </label>
               <input
                 id="cantidad"
                 name="cantidad"
                 type="number"
-                min="0"
+                min="1"
                 step="1"
+                required
                 value={formData.cantidad ?? ""}
                 onChange={handleChange}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
@@ -328,18 +373,19 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
             </div>
             <div>
               <label
-                htmlFor="total"
+                htmlFor="precio"
                 className="mb-1 block text-sm font-medium text-slate-700"
               >
-                Total
+                Precio unitario <span className="text-red-500">*</span>
               </label>
               <input
-                id="total"
-                name="total"
+                id="precio"
+                name="precio"
                 type="number"
                 min="0"
                 step="0.01"
-                value={formData.total ?? ""}
+                required
+                value={formData.precio ?? ""}
                 onChange={handleChange}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 placeholder="0"
@@ -360,7 +406,11 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
               disabled={enviando}
               className="btn-primary flex-1 disabled:opacity-60"
             >
-              {enviando ? "Guardando…" : venta ? "Actualizar" : "Crear venta"}
+              {enviando
+                ? "Guardando…"
+                : compra
+                  ? "Actualizar compra"
+                  : "Crear compra"}
             </button>
           </div>
         </form>
