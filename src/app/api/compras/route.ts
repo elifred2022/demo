@@ -31,39 +31,50 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const {
-      fecha,
-      proveedor,
-      idarticulo,
-      articulo,
-      cantidad,
-      precio,
-    } = body;
+    const { fecha, proveedor, articulos, total } = body;
 
     const fechaHoy = () => new Date().toISOString().split("T")[0];
     const fechaStr = fecha?.trim() ? String(fecha).trim() : fechaHoy();
 
-    if (!proveedor?.trim() || !articulo?.trim()) {
+    if (!proveedor?.trim()) {
       return NextResponse.json(
-        { error: "Proveedor y artículo son obligatorios" },
+        { error: "Proveedor es obligatorio" },
         { status: 400 }
       );
     }
 
-    const idArt = idarticulo != null ? String(idarticulo).trim() : "";
-    const cant = Number(cantidad) || 0;
-    const prec = Number(precio) || 0;
-
-    if (!idArt || cant <= 0 || prec < 0) {
+    const arts = Array.isArray(articulos) ? articulos : [];
+    if (arts.length === 0) {
       return NextResponse.json(
-        { error: "ID artículo, cantidad (positiva) y precio son obligatorios" },
+        { error: "Debe incluir al menos un artículo" },
         { status: 400 }
       );
     }
 
+    const tot =
+      Number(total) ??
+      arts.reduce(
+        (s: number, a: { total?: number }) => s + (Number(a?.total) || 0),
+        0
+      );
+
+    const actualizados: { id: string; cant: number }[] = [];
     try {
-      await actualizarPrecioYStockArticulo(idArt, prec, cant);
+      for (const a of arts) {
+        const idArt = a?.idarticulo != null ? String(a.idarticulo).trim() : "";
+        const cant = Number(a?.cantidad) || 0;
+        const totalArt = Number(a?.total) || 0;
+        const precUnit = cant > 0 ? totalArt / cant : 0;
+        if (idArt && cant > 0) {
+          await actualizarPrecioYStockArticulo(idArt, precUnit, cant);
+          actualizados.push({ id: idArt, cant });
+        }
+      }
     } catch (err) {
+      for (const d of actualizados) {
+        const { restarStockArticulo } = await import("@/lib/google-sheets");
+        await restarStockArticulo(d.id, d.cant).catch(() => {});
+      }
       const msg =
         err instanceof Error ? err.message : "Error al actualizar artículo";
       return NextResponse.json({ error: msg }, { status: 400 });
@@ -73,16 +84,27 @@ export async function POST(request: Request) {
       await insertarCompra({
         fecha: fechaStr,
         proveedor: String(proveedor).trim(),
-        idarticulo: idArt,
-        articulo: String(articulo).trim(),
-        cantidad: cant,
-        precio: prec,
+        articulos: arts.map(
+          (a: {
+            idarticulo?: string;
+            nombre?: string;
+            cantidad?: number;
+            total?: number;
+          }) => ({
+            idarticulo: String(a?.idarticulo ?? "").trim(),
+            nombre: String(a?.nombre ?? "").trim(),
+            cantidad: Number(a?.cantidad) || 0,
+            total: Number(a?.total) || 0,
+          })
+        ),
+        total: tot,
       });
       return NextResponse.json({ success: true });
     } catch (err) {
-      await import("@/lib/google-sheets").then(({ restarStockArticulo }) =>
-        restarStockArticulo(idArt, cant).catch(() => {})
-      );
+      for (const d of actualizados) {
+        const { restarStockArticulo } = await import("@/lib/google-sheets");
+        await restarStockArticulo(d.id, d.cant).catch(() => {});
+      }
       throw err;
     }
   } catch (error) {

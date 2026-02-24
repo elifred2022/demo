@@ -33,41 +33,55 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { fecha, idarticulo, nombre, cantidad, total, precioUnitario } = body;
+    const { fecha, articulos, total, cliente } = body;
 
-    if (!fecha?.trim() || !nombre?.trim()) {
+    if (!fecha?.trim()) {
       return NextResponse.json(
-        { error: "Fecha y nombre son obligatorios" },
+        { error: "Fecha es obligatoria" },
         { status: 400 }
       );
     }
 
-    const cant = Number(cantidad) || 0;
-    const tot = Number(total) || 0;
-    const precio = Number(precioUnitario) ?? (cant > 0 ? tot / cant : 0);
-    const idArt = idarticulo != null ? String(idarticulo).trim() : "";
+    const arts = Array.isArray(articulos) ? articulos : [];
+    if (arts.length === 0) {
+      return NextResponse.json(
+        { error: "Debe incluir al menos un artículo" },
+        { status: 400 }
+      );
+    }
 
-    if (idArt && cant > 0) {
-      try {
-        await descontarStockArticulo(idArt, cant);
-      } catch (err) {
+    const tot = Number(total) ?? arts.reduce((s: number, a: { total?: number }) => s + (Number(a?.total) || 0), 0);
+
+    const descontados: { id: string; cant: number }[] = [];
+    try {
+      for (const a of arts) {
+        const idArt = a?.idarticulo != null ? String(a.idarticulo).trim() : "";
+        const cant = Number(a?.cantidad) || 0;
+        if (idArt && cant > 0) {
+          await descontarStockArticulo(idArt, cant);
+          descontados.push({ id: idArt, cant });
+        }
+      }
+    } catch (err) {
         const msg = err instanceof Error ? err.message : "Error al descontar stock";
         return NextResponse.json({ error: msg }, { status: 400 });
-      }
     }
 
     try {
       await insertarVenta({
         fecha: String(fecha).trim(),
-        articuloId: idArt,
-        articuloNombre: String(nombre).trim(),
-        cantidad: cant,
-        precioUnitario: precio,
+        articulos: arts.map((a: { idarticulo?: string; nombre?: string; cantidad?: number; total?: number }) => ({
+          idarticulo: String(a?.idarticulo ?? "").trim(),
+          nombre: String(a?.nombre ?? "").trim(),
+          cantidad: Number(a?.cantidad) || 0,
+          total: Number(a?.total) || 0,
+        })),
         total: tot,
+        cliente: cliente != null ? String(cliente).trim() : "",
       });
     } catch (err) {
-      if (idArt && cant > 0) {
-        await reponerStockArticulo(idArt, cant).catch(() => {});
+      for (const d of descontados) {
+        await reponerStockArticulo(d.id, d.cant).catch(() => {});
       }
       throw err;
     }

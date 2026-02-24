@@ -11,24 +11,30 @@ export interface Articulo {
   categoria?: string;
 }
 
+/** Artículo individual dentro de una venta (array en campo nombre) */
+export interface ArticuloVenta {
+  idarticulo: string;
+  nombre: string;
+  cantidad: number;
+  total: number;
+}
+
 export interface Venta {
   fecha: string;
-  articuloId: string;
-  articuloNombre: string;
-  cantidad: number;
-  precioUnitario: number;
+  articulos: ArticuloVenta[];
   total: number;
   cliente?: string;
 }
 
-/** Venta tal como se muestra en la lista (columnas: idventa, fecha, idarticulo, nombre, cantidad, precioUnitario, total) */
+/** Venta tal como se muestra en la lista. nombre puede ser JSON (array) o string legacy */
 export interface VentaList {
   idventa: string;
   fecha: string;
-  idarticulo: string;
-  nombre: string;
-  cantidad: number;
-  precioUnitario: number;
+  cliente: string; // nombre del cliente
+  nombre: string; // JSON string de ArticuloVenta[] o string legacy
+  articulos?: ArticuloVenta[]; // parseado desde nombre cuando es JSON
+  cantidad?: number; // legacy
+  precioUnitario?: number; // legacy
   total: number;
 }
 
@@ -50,15 +56,24 @@ export interface Cliente {
   fechaCreacion: string;
 }
 
-/** Compra tal como se muestra en la lista: idcompra, fecha, proveedor, idarticulo, articulo, cantidad, precio */
+/** Artículo individual dentro de una compra (array en campo articulo) */
+export interface ArticuloCompra {
+  idarticulo: string;
+  nombre: string;
+  cantidad: number;
+  total: number;
+}
+
+/** Compra tal como se muestra en la lista. articulo puede ser JSON (array) o string legacy */
 export interface CompraList {
   idcompra: string;
   fecha: string;
   proveedor: string;
-  idarticulo: string;
-  articulo: string;
-  cantidad: number;
-  precio: number;
+  idarticulo?: string; // legacy
+  articulo: string; // JSON string de ArticuloCompra[] o string legacy
+  articulos?: ArticuloCompra[]; // parseado desde articulo cuando es JSON
+  cantidad?: number; // legacy
+  total: number; // total de la compra (suma de totales de artículos)
 }
 
 function getSpreadsheetId(): string {
@@ -556,7 +571,7 @@ export async function eliminarArticulo(id: string): Promise<void> {
 
 /**
  * Obtiene todas las ventas de la pestaña 'ventas'.
- * Columnas esperadas: idventa, fecha, idarticulo, nombre, cantidad, total
+ * Columnas esperadas: idventa, fecha, cliente, nombre, cantidad, total
  */
 export async function getVentas(): Promise<VentaList[]> {
   const sheets = await getGoogleSheetsClient();
@@ -579,7 +594,7 @@ export async function getVentas(): Promise<VentaList[]> {
   const idx = {
     idventa: headerIndex('idventa'),
     fecha: headerIndex('fecha'),
-    idarticulo: headerIndex('idarticulo') >= 0 ? headerIndex('idarticulo') : headerIndex('articuloid'),
+    cliente: headerIndex('cliente') >= 0 ? headerIndex('cliente') : headerIndex('idarticulo') >= 0 ? headerIndex('idarticulo') : -1,
     nombre: headerIndex('nombre') >= 0 ? headerIndex('nombre') : headerIndex('articulonombre'),
     cantidad: headerIndex('cantidad'),
     precioUnitario: headerIndex('preciounitario') >= 0 ? headerIndex('preciounitario') : headerIndex('precio'),
@@ -595,17 +610,29 @@ export async function getVentas(): Promise<VentaList[]> {
     };
 
     const idventa = idx.idventa >= 0 ? get(idx.idventa) : String(i + 1);
+    const nombreRaw = idx.nombre >= 0 ? get(idx.nombre) : '';
     const cantidad = getNum(idx.cantidad);
     const total = getNum(idx.total);
     const precioUnitario = idx.precioUnitario >= 0
       ? getNum(idx.precioUnitario)
       : (cantidad > 0 ? total / cantidad : 0);
 
+    let articulos: ArticuloVenta[] | undefined;
+    if (nombreRaw.startsWith('[')) {
+      try {
+        articulos = JSON.parse(nombreRaw) as ArticuloVenta[];
+        if (!Array.isArray(articulos)) articulos = undefined;
+      } catch {
+        /* Si el JSON no es válido, se trata como nombre legacy */
+      }
+    }
+
     return {
       idventa,
       fecha: idx.fecha >= 0 ? get(idx.fecha) : '',
-      idarticulo: idx.idarticulo >= 0 ? get(idx.idarticulo) : '',
-      nombre: idx.nombre >= 0 ? get(idx.nombre) : '',
+      cliente: idx.cliente >= 0 ? get(idx.cliente) : '',
+      nombre: nombreRaw,
+      articulos,
       cantidad,
       precioUnitario,
       total,
@@ -673,12 +700,17 @@ export async function eliminarVenta(idventa: string): Promise<void> {
   });
 }
 
+/** Payload para actualizar venta: articulos (nuevo formato) o nombre/cantidad/total (legacy) */
+export type VentaUpdatePayload = Partial<Omit<VentaList, 'idventa'>> & {
+  articulos?: ArticuloVenta[];
+};
+
 /**
  * Actualiza una venta existente por idventa.
  */
 export async function actualizarVenta(
   idventaAntiguo: string,
-  venta: Partial<Omit<VentaList, 'idventa'>>
+  venta: VentaUpdatePayload
 ): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -699,7 +731,7 @@ export async function actualizarVenta(
   const idx = {
     idventa: headerIndex('idventa'),
     fecha: headerIndex('fecha'),
-    idarticulo: headerIndex('idarticulo') >= 0 ? headerIndex('idarticulo') : headerIndex('articuloid'),
+    cliente: headerIndex('cliente') >= 0 ? headerIndex('cliente') : headerIndex('idarticulo') >= 0 ? headerIndex('idarticulo') : -1,
     nombre: headerIndex('nombre') >= 0 ? headerIndex('nombre') : headerIndex('articulonombre'),
     cantidad: headerIndex('cantidad'),
     total: headerIndex('total'),
@@ -723,18 +755,28 @@ export async function actualizarVenta(
   const actual = ventas.find((v) => v.idventa.trim() === idventaAntiguo.trim());
   if (!actual) throw new Error('Venta no encontrada');
 
+  let nombre: string;
+  let total: number;
+  if (venta.articulos && Array.isArray(venta.articulos) && venta.articulos.length > 0) {
+    nombre = JSON.stringify(venta.articulos);
+    total = venta.articulos.reduce((sum, a) => sum + (a.total || 0), 0);
+  } else {
+    nombre = venta.nombre ?? actual.nombre;
+    total = venta.total ?? actual.total;
+  }
+
   const nueva = {
     idventa: actual.idventa,
     fecha: venta.fecha ?? actual.fecha,
-    idarticulo: venta.idarticulo ?? actual.idarticulo,
-    nombre: venta.nombre ?? actual.nombre,
-    cantidad: venta.cantidad ?? actual.cantidad,
-    precioUnitario: venta.precioUnitario ?? actual.precioUnitario,
-    total: venta.total ?? actual.total,
+    cliente: venta.cliente ?? actual.cliente ?? '',
+    nombre,
+    cantidad: 0,
+    precioUnitario: 0,
+    total,
   };
 
   const range = `'ventas'!A${sheetRow}:G${sheetRow}`;
-  const values = [[nueva.idventa, nueva.fecha, nueva.idarticulo, nueva.nombre, nueva.cantidad, nueva.precioUnitario, nueva.total]];
+  const values = [[nueva.idventa, nueva.fecha, nueva.cliente, nueva.nombre, nueva.cantidad, nueva.precioUnitario, nueva.total]];
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
@@ -760,21 +802,26 @@ export async function generarSiguienteIdVenta(): Promise<string> {
 /**
  * Inserta una nueva fila en la pestaña 'ventas'.
  * El idventa se genera automáticamente.
+ * nombre almacena JSON del array de artículos; total es la suma de totales.
  */
 export async function insertarVenta(venta: Venta): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
   const idventa = await generarSiguienteIdVenta();
 
+  const nombreJson = JSON.stringify(venta.articulos);
+  const total = venta.total;
+  const cliente = venta.cliente?.trim() ?? '';
+
   const values = [
     [
       idventa,
       venta.fecha,
-      venta.articuloId,
-      venta.articuloNombre,
-      venta.cantidad,
-      venta.precioUnitario,
-      venta.total,
+      cliente,
+      nombreJson,
+      0, // cantidad (legacy)
+      0, // precioUnitario (legacy)
+      total,
     ],
   ];
 
@@ -999,7 +1046,7 @@ export async function eliminarProveedor(id: string): Promise<void> {
 
 /**
  * Obtiene todas las compras de la pestaña 'compras'.
- * Columnas: idcompra, fecha, proveedor, idarticulo, articulo, cantidad, precio
+ * Columnas: idcompra, fecha, proveedor, idarticulo, articulo, cantidad, total
  */
 export async function getCompras(): Promise<CompraList[]> {
   const sheets = await getGoogleSheetsClient();
@@ -1031,7 +1078,7 @@ export async function getCompras(): Promise<CompraList[]> {
     idarticulo: headerIndex(['idarticulo', 'id articulo', 'articuloid']),
     articulo: headerIndex(['articulo', 'nombre', 'articulonombre']),
     cantidad: headerIndex(['cantidad']),
-    precio: headerIndex(['precio', 'preciounitario']),
+    total: headerIndex(['total']) >= 0 ? headerIndex(['total']) : headerIndex(['precio', 'preciounitario']),
   };
 
   return rows.slice(1).map((row, i) => {
@@ -1043,14 +1090,28 @@ export async function getCompras(): Promise<CompraList[]> {
     };
 
     const idcompra = idx.idcompra >= 0 ? get(idx.idcompra) : String(i + 1);
+    const articuloRaw = idx.articulo >= 0 ? get(idx.articulo) : '';
+    const total = getNum(idx.total);
+
+    let articulos: ArticuloCompra[] | undefined;
+    if (articuloRaw.startsWith('[')) {
+      try {
+        articulos = JSON.parse(articuloRaw) as ArticuloCompra[];
+        if (!Array.isArray(articulos)) articulos = undefined;
+      } catch {
+        /* Si el JSON no es válido, se trata como articulo legacy */
+      }
+    }
+
     return {
       idcompra,
       fecha: idx.fecha >= 0 ? get(idx.fecha) : '',
       proveedor: idx.proveedor >= 0 ? get(idx.proveedor) : '',
       idarticulo: idx.idarticulo >= 0 ? get(idx.idarticulo) : '',
-      articulo: idx.articulo >= 0 ? get(idx.articulo) : '',
+      articulo: articuloRaw,
+      articulos,
       cantidad: getNum(idx.cantidad),
-      precio: getNum(idx.precio),
+      total,
     } satisfies CompraList;
   });
 }
@@ -1065,20 +1126,30 @@ export async function generarSiguienteIdCompra(): Promise<string> {
   return String(max + 1);
 }
 
-export async function insertarCompra(compra: Omit<CompraList, 'idcompra'>): Promise<void> {
+/** Payload para insertar compra: articulos array y total */
+export interface CompraNueva {
+  fecha: string;
+  proveedor: string;
+  articulos: ArticuloCompra[];
+  total: number; // total de la compra
+}
+
+export async function insertarCompra(compra: CompraNueva): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
   const idcompra = await generarSiguienteIdCompra();
+
+  const articuloJson = JSON.stringify(compra.articulos);
 
   const values = [
     [
       idcompra,
       compra.fecha,
       compra.proveedor,
-      compra.idarticulo,
-      compra.articulo,
-      compra.cantidad,
-      compra.precio,
+      '', // idarticulo ya no se usa
+      articuloJson,
+      0, // cantidad (legacy)
+      compra.total,
     ],
   ];
 
@@ -1091,9 +1162,14 @@ export async function insertarCompra(compra: Omit<CompraList, 'idcompra'>): Prom
   });
 }
 
+/** Payload para actualizar compra: articulos (nuevo formato) o articulo/cantidad/total (legacy) */
+export type CompraUpdatePayload = Partial<Omit<CompraList, 'idcompra'>> & {
+  articulos?: ArticuloCompra[];
+};
+
 export async function actualizarCompra(
   idcompraAntiguo: string,
-  compra: Partial<Omit<CompraList, 'idcompra'>>
+  compra: CompraUpdatePayload
 ): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
@@ -1122,7 +1198,7 @@ export async function actualizarCompra(
     idarticulo: headerIndex(['idarticulo', 'id articulo']),
     articulo: headerIndex(['articulo', 'nombre']),
     cantidad: headerIndex(['cantidad']),
-    precio: headerIndex(['precio']),
+    total: headerIndex(['total']) >= 0 ? headerIndex(['total']) : headerIndex(['precio']),
   };
   const idCol = idx.idcompra >= 0 ? idx.idcompra : 0;
 
@@ -1137,19 +1213,29 @@ export async function actualizarCompra(
   const actual = compras.find((c) => c.idcompra.trim() === idcompraAntiguo.trim());
   if (!actual) throw new Error('Compra no encontrada');
 
+  let articulo: string;
+  let total: number;
+  if (compra.articulos && Array.isArray(compra.articulos) && compra.articulos.length > 0) {
+    articulo = JSON.stringify(compra.articulos);
+    total = compra.articulos.reduce((sum, a) => sum + (a.total || 0), 0);
+  } else {
+    articulo = compra.articulo ?? actual.articulo;
+    total = compra.total ?? actual.total;
+  }
+
   const nueva = {
     idcompra: actual.idcompra,
     fecha: compra.fecha ?? actual.fecha,
     proveedor: compra.proveedor ?? actual.proveedor,
-    idarticulo: compra.idarticulo ?? actual.idarticulo,
-    articulo: compra.articulo ?? actual.articulo,
-    cantidad: compra.cantidad ?? actual.cantidad,
-    precio: compra.precio ?? actual.precio,
+    idarticulo: '',
+    articulo,
+    cantidad: 0,
+    total,
   };
 
   const sheetRow = rowIndex + 1;
   const range = `'compras'!A${sheetRow}:G${sheetRow}`;
-  const values = [[nueva.idcompra, nueva.fecha, nueva.proveedor, nueva.idarticulo, nueva.articulo, nueva.cantidad, nueva.precio]];
+  const values = [[nueva.idcompra, nueva.fecha, nueva.proveedor, nueva.idarticulo, nueva.articulo, nueva.cantidad, nueva.total]];
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,

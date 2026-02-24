@@ -30,57 +30,81 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const {
-      fecha,
-      proveedor,
-      idarticulo,
-      articulo,
-      cantidad,
-      precio,
-    } = body;
+    const { fecha, proveedor, articulos, total } = body;
 
-    const idArtNuevo =
-      idarticulo != null ? String(idarticulo).trim() : compraActual.idarticulo;
-    const cantNueva =
-      cantidad != null ? Number(cantidad) || 0 : compraActual.cantidad;
-    const precNuevo =
-      precio != null ? Number(precio) || 0 : compraActual.precio;
-    const idArtViejo = compraActual.idarticulo.trim();
-    const cantVieja = compraActual.cantidad;
-    const precViejo = compraActual.precio;
+    const artsNuevos = Array.isArray(articulos) ? articulos : [];
+    const artsViejos = compraActual.articulos ?? [];
 
-    if (idArtViejo && cantVieja > 0) {
-      try {
-        await restarStockArticulo(idArtViejo, cantVieja);
-      } catch {
-        /* Si el artículo no existe, continuamos */
+    if (artsViejos.length > 0) {
+      for (const a of artsViejos) {
+        const idArt = a?.idarticulo?.trim();
+        const cant = Number(a?.cantidad) || 0;
+        if (idArt && cant > 0) {
+          try {
+            await restarStockArticulo(idArt, cant);
+          } catch {
+            /* Si el artículo no existe, continuamos */
+          }
+        }
       }
     }
 
-    if (idArtNuevo && cantNueva > 0) {
-      try {
-        await actualizarPrecioYStockArticulo(idArtNuevo, precNuevo, cantNueva);
-      } catch (err) {
-        if (idArtViejo && cantVieja > 0) {
-          await actualizarPrecioYStockArticulo(
-            idArtViejo,
-            precViejo,
-            cantVieja
-          ).catch(() => {});
+    const actualizados: { id: string; cant: number }[] = [];
+    try {
+      for (const a of artsNuevos) {
+        const idArt = a?.idarticulo != null ? String(a.idarticulo).trim() : "";
+        const cant = Number(a?.cantidad) || 0;
+        const totalArt = Number(a?.total) || 0;
+        const precUnit = cant > 0 ? totalArt / cant : 0;
+        if (idArt && cant > 0) {
+          await actualizarPrecioYStockArticulo(idArt, precUnit, cant);
+          actualizados.push({ id: idArt, cant });
         }
-        const msg =
-          err instanceof Error ? err.message : "Error al actualizar artículo";
-        return NextResponse.json({ error: msg }, { status: 400 });
       }
+    } catch (err) {
+      for (const d of actualizados) {
+        await restarStockArticulo(d.id, d.cant).catch(() => {});
+      }
+      if (artsViejos.length > 0) {
+        for (const a of artsViejos) {
+          const idArt = a?.idarticulo?.trim();
+          const cant = Number(a?.cantidad) || 0;
+          const totalArt = Number(a?.total) || 0;
+          const precUnit = cant > 0 ? totalArt / cant : 0;
+          if (idArt && cant > 0) {
+            await actualizarPrecioYStockArticulo(idArt, precUnit, cant).catch(
+              () => {}
+            );
+          }
+        }
+      }
+      const msg =
+        err instanceof Error ? err.message : "Error al actualizar artículo";
+      return NextResponse.json({ error: msg }, { status: 400 });
     }
 
     await actualizarCompra(id, {
       ...(fecha != null && { fecha: String(fecha).trim() }),
       ...(proveedor != null && { proveedor: String(proveedor).trim() }),
-      ...(idarticulo != null && { idarticulo: String(idarticulo).trim() }),
-      ...(articulo != null && { articulo: String(articulo).trim() }),
-      ...(cantidad != null && { cantidad: Number(cantidad) || 0 }),
-      ...(precio != null && { precio: Number(precio) || 0 }),
+      articulos: artsNuevos.map(
+        (a: {
+          idarticulo?: string;
+          nombre?: string;
+          cantidad?: number;
+          total?: number;
+        }) => ({
+          idarticulo: String(a?.idarticulo ?? "").trim(),
+          nombre: String(a?.nombre ?? "").trim(),
+          cantidad: Number(a?.cantidad) || 0,
+          total: Number(a?.total) || 0,
+        })
+      ),
+      total:
+        Number(total) ??
+        artsNuevos.reduce(
+          (s: number, a: { total?: number }) => s + (Number(a?.total) || 0),
+          0
+        ),
     });
     return NextResponse.json({ success: true });
   } catch (error) {
@@ -106,9 +130,21 @@ export async function DELETE(
 
     const compras = await getCompras();
     const compra = compras.find((c) => c.idcompra.trim() === id.trim());
-    if (compra?.idarticulo && compra.cantidad > 0) {
+    if (compra?.articulos && compra.articulos.length > 0) {
+      for (const a of compra.articulos) {
+        const idArt = a?.idarticulo?.trim();
+        const cant = Number(a?.cantidad) || 0;
+        if (idArt && cant > 0) {
+          try {
+            await restarStockArticulo(idArt, cant);
+          } catch {
+            /* Si el artículo no existe, continuamos */
+          }
+        }
+      }
+    } else if (compra?.idarticulo && (compra.cantidad ?? 0) > 0) {
       try {
-        await restarStockArticulo(compra.idarticulo, compra.cantidad);
+        await restarStockArticulo(compra.idarticulo, compra.cantidad!);
       } catch {
         /* Si el artículo no existe, continuamos con la eliminación */
       }
@@ -117,7 +153,8 @@ export async function DELETE(
     await eliminarCompra(id);
     return NextResponse.json({ success: true });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : "Error al eliminar";
+    const msg =
+      error instanceof Error ? error.message : "Error al eliminar";
     const status = msg.includes("no encontrada") ? 404 : 500;
     return NextResponse.json({ error: msg }, { status });
   }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { VentaList } from "@/lib/google-sheets";
+import type { VentaList, ArticuloVenta, Cliente } from "@/lib/google-sheets";
 
 interface ArticuloEncontrado {
   id?: string;
@@ -11,6 +11,10 @@ interface ArticuloEncontrado {
   nombre: string;
   precio: number;
   stock: number;
+}
+
+interface LineaVenta extends ArticuloVenta {
+  precioUnitario: number;
 }
 
 interface FormVentasProps {
@@ -27,13 +31,11 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
   const [buscando, setBuscando] = useState(false);
   const [articuloEncontrado, setArticuloEncontrado] = useState<ArticuloEncontrado | null>(null);
   const fechaHoy = () => new Date().toISOString().split("T")[0];
-  const [formData, setFormData] = useState({
-    fecha: venta?.fecha ?? fechaHoy(),
-    idarticulo: venta?.idarticulo ?? "",
-    nombre: venta?.nombre ?? "",
-    cantidad: venta?.cantidad?.toString() ?? "",
-    total: venta?.total?.toString() ?? "",
-  });
+  const [fecha, setFecha] = useState(venta?.fecha ?? fechaHoy());
+  const [cliente, setCliente] = useState(venta?.cliente ?? "");
+  const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [lineas, setLineas] = useState<LineaVenta[]>([]);
+  const [cantidadActual, setCantidadActual] = useState("1");
 
   const buscarArticulo = useCallback(async (codbarra?: string, id?: string) => {
     if ((!codbarra || !codbarra.trim()) && (!id || !id.trim())) return null;
@@ -52,105 +54,138 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
     }
   }, []);
 
-  const aplicarArticulo = useCallback((art: ArticuloEncontrado) => {
-    setArticuloEncontrado(art);
+  const agregarLinea = useCallback((art: ArticuloEncontrado, cantidad: number) => {
     const idArt = art.idarticulo ?? art.id ?? "";
-    setFormData((prev) => ({
-      ...prev,
+    const total = cantidad * art.precio;
+    const nueva: LineaVenta = {
       idarticulo: idArt,
       nombre: art.nombre ?? "",
-      total: prev.cantidad ? String(Number(prev.cantidad) * art.precio) : prev.total,
-    }));
+      cantidad,
+      total,
+      precioUnitario: art.precio,
+    };
+    setLineas((prev) => {
+      const existente = prev.find(
+        (l) => l.idarticulo?.toLowerCase() === idArt.toLowerCase()
+      );
+      if (existente) {
+        return prev.map((l) =>
+          l.idarticulo?.toLowerCase() === idArt.toLowerCase()
+            ? {
+                ...l,
+                cantidad: l.cantidad + cantidad,
+                total: (l.cantidad + cantidad) * l.precioUnitario,
+              }
+            : l
+        );
+      }
+      return [...prev, nueva];
+    });
+    setArticuloEncontrado(null);
+    setCantidadActual("1");
+  }, []);
+
+  const quitarLinea = useCallback((index: number) => {
+    setLineas((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const actualizarCantidadLinea = useCallback((index: number, nuevaCantidad: number) => {
+    if (nuevaCantidad < 1) return;
+    setLineas((prev) =>
+      prev.map((l, i) =>
+        i === index
+          ? {
+              ...l,
+              cantidad: nuevaCantidad,
+              total: nuevaCantidad * l.precioUnitario,
+            }
+          : l
+      )
+    );
   }, []);
 
   const handleBuscarPorCodbarra = async () => {
     const cod = codbarraBuscar.trim();
     if (!cod) return;
     setError("");
-    const art = await buscarArticulo(cod);
+    const art = await buscarArticulo(cod, cod);
     if (art) {
-      aplicarArticulo(art);
+      setArticuloEncontrado(art);
       setCodbarraBuscar("");
     } else {
-      setError("No se encontró artículo con ese código de barras");
+      setError("No se encontró artículo con ese código de barras o ID");
     }
   };
+
+  const handleAgregarAlCarrito = () => {
+    if (!articuloEncontrado) return;
+    const cant = parseInt(cantidadActual, 10) || 1;
+    if (cant < 1) {
+      setError("La cantidad debe ser al menos 1");
+      return;
+    }
+    if (articuloEncontrado.stock < cant) {
+      setError(`Stock insuficiente. Disponible: ${articuloEncontrado.stock}`);
+      return;
+    }
+    setError("");
+    agregarLinea(articuloEncontrado, cant);
+  };
+
+  useEffect(() => {
+    fetch("/api/clientes", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => setClientes(data.clientes ?? []))
+      .catch(() => setClientes([]));
+  }, []);
 
   useEffect(() => {
     if (venta) {
-      setFormData({
-        fecha: venta.fecha ?? "",
-        idarticulo: venta.idarticulo ?? "",
-        nombre: venta.nombre ?? "",
-        cantidad: venta.cantidad?.toString() ?? "",
-        total: venta.total?.toString() ?? "",
-      });
-      setArticuloEncontrado({
-        idarticulo: venta.idarticulo,
-        codbarra: "",
-        nombre: venta.nombre,
-        precio: venta.precioUnitario,
-        stock: 0,
-      });
+      setFecha(venta.fecha ?? "");
+      setCliente(venta.cliente ?? "");
+      if (venta.articulos && venta.articulos.length > 0) {
+        setLineas(
+          venta.articulos.map((a) => ({
+            ...a,
+            precioUnitario: a.cantidad > 0 ? a.total / a.cantidad : 0,
+          }))
+        );
+      } else {
+        setLineas([]);
+      }
     } else {
-      setFormData({
-        fecha: fechaHoy(),
-        idarticulo: "",
-        nombre: "",
-        cantidad: "",
-        total: "",
-      });
-      setArticuloEncontrado(null);
+      setFecha(fechaHoy());
+      setCliente("");
+      setLineas([]);
       setCodbarraBuscar("");
+      setArticuloEncontrado(null);
     }
   }, [venta]);
 
-  useEffect(() => {
-    const id = (formData.idarticulo ?? "").trim();
-    if (!id || venta) return;
-    const idEncontrado = (articuloEncontrado?.idarticulo ?? articuloEncontrado?.id ?? "").trim().toLowerCase();
-    if (idEncontrado === id.toLowerCase()) return;
-    const t = setTimeout(async () => {
-      const art = await buscarArticulo(undefined, id);
-      if (art) aplicarArticulo(art);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [formData.idarticulo, venta, articuloEncontrado?.idarticulo, articuloEncontrado?.id, buscarArticulo, aplicarArticulo]);
-
-  useEffect(() => {
-    if (articuloEncontrado && formData.cantidad) {
-      const cant = parseFloat(formData.cantidad) || 0;
-      setFormData((prev) => ({
-        ...prev,
-        total: String(cant * articuloEncontrado.precio),
-      }));
-    }
-  }, [formData.cantidad, articuloEncontrado]);
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    setError("");
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value ?? "" }));
-  };
+  const totalVenta = lineas.reduce((sum, l) => sum + l.total, 0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setEnviando(true);
+    if (lineas.length === 0) {
+      setError("Debe agregar al menos un artículo a la venta");
+      return;
+    }
 
-    const cantidad = parseFloat(formData.cantidad) || 0;
-    const total = parseFloat(formData.total) || 0;
-    const precioUnitario = cantidad > 0 ? total / cantidad : 0;
-
-    const payload = {
-      fecha: formData.fecha.trim(),
-      idarticulo: formData.idarticulo.trim(),
-      nombre: formData.nombre.trim(),
+    const articulos: ArticuloVenta[] = lineas.map(({ idarticulo, nombre, cantidad, total }) => ({
+      idarticulo,
+      nombre,
       cantidad,
       total,
-      precioUnitario,
+    }));
+
+    setEnviando(true);
+
+    const payload = {
+      fecha: fecha.trim(),
+      cliente: cliente.trim(),
+      articulos,
+      total: totalVenta,
     };
 
     try {
@@ -180,14 +215,8 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onCerrar()}
-    >
-      <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+      <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl my-8">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">
             {venta ? "Editar venta" : "Nueva venta"}
@@ -210,10 +239,7 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
           )}
 
           <div>
-            <label
-              htmlFor="fecha"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
+            <label htmlFor="fecha" className="mb-1 block text-sm font-medium text-slate-700">
               Fecha <span className="text-red-500">*</span>
             </label>
             <input
@@ -221,18 +247,38 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
               name="fecha"
               type="date"
               required
-              value={formData.fecha ?? ""}
-              onChange={handleChange}
+              value={fecha ?? ""}
+              onChange={(e) => setFecha(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             />
           </div>
 
           <div>
-            <label
-              htmlFor="codbarra"
-              className="mb-1 block text-sm font-medium text-slate-700"
+            <label htmlFor="cliente" className="mb-1 block text-sm font-medium text-slate-700">
+              Cliente
+            </label>
+            <select
+              id="cliente"
+              name="cliente"
+              value={cliente}
+              onChange={(e) => setCliente(e.target.value)}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             >
-              Buscar por código de barras
+              <option value="">Seleccionar cliente</option>
+              {cliente && !clientes.some((c) => c.nombre === cliente) && (
+                <option value={cliente}>{cliente}</option>
+              )}
+              {clientes.map((c) => (
+                <option key={c.idcliente} value={c.nombre}>
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="codbarra" className="mb-1 block text-sm font-medium text-slate-700">
+              Buscar artículo (código de barras o ID)
             </label>
             <div className="flex gap-2">
               <input
@@ -240,9 +286,11 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
                 type="text"
                 value={codbarraBuscar}
                 onChange={(e) => setCodbarraBuscar(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), handleBuscarPorCodbarra())}
+                onKeyDown={(e) =>
+                  e.key === "Enter" && (e.preventDefault(), handleBuscarPorCodbarra())
+                }
                 className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="Escanear o tipear código de barras"
+                placeholder="Escanear o tipear código"
               />
               <button
                 type="button"
@@ -255,109 +303,107 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
             </div>
           </div>
 
+          {articuloEncontrado && (
+            <div className="rounded-lg bg-sky-50 border border-sky-200 px-3 py-3">
+              <p className="text-sm font-medium text-sky-800 mb-1">
+                {articuloEncontrado.nombre}
+              </p>
+              <p className="text-xs text-sky-700 mb-2">
+                Precio: {articuloEncontrado.precio.toLocaleString()} · Stock: {articuloEncontrado.stock}
+              </p>
+              <div className="flex gap-2 items-center">
+                <input
+                  type="number"
+                  min="1"
+                  value={cantidadActual}
+                  onChange={(e) => setCantidadActual(e.target.value)}
+                  className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={handleAgregarAlCarrito}
+                  className="btn-primary text-sm py-1.5 px-3"
+                >
+                  Agregar a la venta
+                </button>
+              </div>
+            </div>
+          )}
+
           <div>
-            <label
-              htmlFor="idarticulo"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
-              ID artículo <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="idarticulo"
-              name="idarticulo"
-              type="text"
-              required
-              value={formData.idarticulo ?? ""}
-              onChange={handleChange}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              placeholder="Tipear ID del artículo (busca automáticamente)"
-            />
-            {buscando && !articuloEncontrado && (
-              <p className="mt-1 text-xs text-slate-500">Buscando artículo…</p>
-            )}
-            {articuloEncontrado && (
-              <div className="mt-2 rounded-lg bg-sky-50 border border-sky-200 px-3 py-2">
-                <p className="text-sm font-medium text-sky-800">
-                  Precio unitario: <span className="font-semibold">{articuloEncontrado.precio.toLocaleString()}</span>
-                </p>
-                <p className="text-sm font-medium text-sky-800">
-                  Stock disponible: <span className="font-semibold">{articuloEncontrado.stock}</span>
-                </p>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">Artículos en la venta</span>
+              {lineas.length > 0 && (
+                <span className="text-xs text-slate-500">{lineas.length} artículo(s)</span>
+              )}
+            </div>
+            {lineas.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 py-6 text-center text-slate-500 text-sm">
+                Busca artículos y agrégalos aquí
+              </div>
+            ) : (
+              <div className="rounded-lg border border-slate-200 overflow-hidden max-h-48 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="px-2 py-2 text-left font-medium text-slate-700">Artículo</th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">Cant</th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">Total</th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineas.map((l, i) => (
+                      <tr key={i} className="border-t border-slate-100">
+                        <td className="px-2 py-2 text-slate-800">{l.nombre}</td>
+                        <td className="px-2 py-2 text-right">
+                          <input
+                            type="number"
+                            min="1"
+                            value={l.cantidad}
+                            onChange={(e) =>
+                              actualizarCantidadLinea(i, parseInt(e.target.value, 10) || 1)
+                            }
+                            className="w-14 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right font-medium">
+                          {l.total.toLocaleString()}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => quitarLinea(i)}
+                            className="text-red-500 hover:text-red-700 text-xs"
+                            aria-label="Quitar"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
 
-          <div>
-            <label
-              htmlFor="nombre"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
-              Nombre <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="nombre"
-              name="nombre"
-              type="text"
-              required
-              value={formData.nombre ?? ""}
-              onChange={handleChange}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              placeholder="Nombre del artículo"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label
-                htmlFor="cantidad"
-                className="mb-1 block text-sm font-medium text-slate-700"
-              >
-                Cantidad
-              </label>
-              <input
-                id="cantidad"
-                name="cantidad"
-                type="number"
-                min="0"
-                step="1"
-                value={formData.cantidad ?? ""}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="0"
-              />
+          {lineas.length > 0 && (
+            <div className="rounded-lg bg-slate-100 px-4 py-3 flex justify-between items-center">
+              <span className="font-medium text-slate-700">Total de la venta</span>
+              <span className="text-lg font-bold text-slate-900">
+                {totalVenta.toLocaleString()}
+              </span>
             </div>
-            <div>
-              <label
-                htmlFor="total"
-                className="mb-1 block text-sm font-medium text-slate-700"
-              >
-                Total
-              </label>
-              <input
-                id="total"
-                name="total"
-                type="number"
-                min="0"
-                step="0.01"
-                value={formData.total ?? ""}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="0"
-              />
-            </div>
-          </div>
+          )}
 
           <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={onCerrar}
-              className="btn-secondary flex-1"
-            >
+            <button type="button" onClick={onCerrar} className="btn-secondary flex-1">
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={enviando}
+              disabled={enviando || lineas.length === 0}
               className="btn-primary flex-1 disabled:opacity-60"
             >
               {enviando ? "Guardando…" : venta ? "Actualizar" : "Crear venta"}

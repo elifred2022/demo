@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import type { CompraList, Proveedor } from "@/lib/google-sheets";
+import type { CompraList, ArticuloCompra, Proveedor } from "@/lib/google-sheets";
 
 interface ArticuloEncontrado {
   id?: string;
@@ -11,6 +11,10 @@ interface ArticuloEncontrado {
   nombre: string;
   precio: number;
   stock: number;
+}
+
+interface LineaCompra extends ArticuloCompra {
+  precioUnitario: number;
 }
 
 interface FormComprasProps {
@@ -34,14 +38,11 @@ export default function FormCompras({
   const [articuloEncontrado, setArticuloEncontrado] =
     useState<ArticuloEncontrado | null>(null);
   const fechaHoy = () => new Date().toISOString().split("T")[0];
-  const [formData, setFormData] = useState({
-    fecha: compra?.fecha ?? fechaHoy(),
-    proveedor: compra?.proveedor ?? "",
-    idarticulo: compra?.idarticulo ?? "",
-    articulo: compra?.articulo ?? "",
-    cantidad: compra?.cantidad?.toString() ?? "",
-    precio: compra?.precio?.toString() ?? "",
-  });
+  const [fecha, setFecha] = useState(compra?.fecha ?? fechaHoy());
+  const [proveedor, setProveedor] = useState(compra?.proveedor ?? "");
+  const [lineas, setLineas] = useState<LineaCompra[]>([]);
+  const [cantidadActual, setCantidadActual] = useState("1");
+  const [precioActual, setPrecioActual] = useState("");
 
   const buscarArticulo = useCallback(async (codbarra?: string, id?: string) => {
     if ((!codbarra || !codbarra.trim()) && (!id || !id.trim())) return null;
@@ -60,107 +61,148 @@ export default function FormCompras({
     }
   }, []);
 
-  const aplicarArticulo = useCallback((art: ArticuloEncontrado) => {
-    setArticuloEncontrado(art);
-    const idArt = art.idarticulo ?? art.id ?? "";
-    setFormData((prev) => ({
-      ...prev,
-      idarticulo: idArt,
-      articulo: art.nombre ?? "",
-      precio: art.precio?.toString() ?? prev.precio,
-    }));
+  const agregarLinea = useCallback(
+    (art: ArticuloEncontrado, cantidad: number, precioUnit: number) => {
+      const idArt = art.idarticulo ?? art.id ?? "";
+      const total = cantidad * precioUnit;
+      const nueva: LineaCompra = {
+        idarticulo: idArt,
+        nombre: art.nombre ?? "",
+        cantidad,
+        total,
+        precioUnitario: precioUnit,
+      };
+      setLineas((prev) => {
+        const existente = prev.find(
+          (l) => l.idarticulo?.toLowerCase() === idArt.toLowerCase()
+        );
+        if (existente) {
+          return prev.map((l) =>
+            l.idarticulo?.toLowerCase() === idArt.toLowerCase()
+              ? {
+                  ...l,
+                  cantidad: l.cantidad + cantidad,
+                  total: (l.cantidad + cantidad) * precioUnit,
+                  precioUnitario: precioUnit,
+                }
+              : l
+          );
+        }
+        return [...prev, nueva];
+      });
+      setArticuloEncontrado(null);
+      setCantidadActual("1");
+      setPrecioActual("");
+    },
+    []
+  );
+
+  const quitarLinea = useCallback((index: number) => {
+    setLineas((prev) => prev.filter((_, i) => i !== index));
   }, []);
+
+  const actualizarLinea = useCallback(
+    (index: number, nuevaCantidad: number, nuevoPrecio: number) => {
+      if (nuevaCantidad < 1 || nuevoPrecio < 0) return;
+      setLineas((prev) =>
+        prev.map((l, i) =>
+          i === index
+            ? {
+                ...l,
+                cantidad: nuevaCantidad,
+                precioUnitario: nuevoPrecio,
+                total: nuevaCantidad * nuevoPrecio,
+              }
+            : l
+        )
+      );
+    },
+    []
+  );
 
   const handleBuscarPorCodbarra = async () => {
     const cod = codbarraBuscar.trim();
     if (!cod) return;
     setError("");
-    const art = await buscarArticulo(cod);
+    const art = await buscarArticulo(cod, cod);
     if (art) {
-      aplicarArticulo(art);
+      setArticuloEncontrado(art);
+      setPrecioActual(art.precio?.toString() ?? "");
       setCodbarraBuscar("");
     } else {
-      setError("No se encontró artículo con ese código de barras");
+      setError("No se encontró artículo con ese código de barras o ID");
     }
+  };
+
+  const handleAgregarAlCarrito = () => {
+    if (!articuloEncontrado) return;
+    const cant = parseInt(cantidadActual, 10) || 1;
+    const prec = parseFloat(precioActual) || articuloEncontrado.precio || 0;
+    if (cant < 1) {
+      setError("La cantidad debe ser al menos 1");
+      return;
+    }
+    if (prec < 0) {
+      setError("El precio debe ser mayor o igual a 0");
+      return;
+    }
+    setError("");
+    agregarLinea(articuloEncontrado, cant, prec);
   };
 
   useEffect(() => {
     if (compra) {
-      setFormData({
-        fecha: compra.fecha ?? fechaHoy(),
-        proveedor: compra.proveedor ?? "",
-        idarticulo: compra.idarticulo ?? "",
-        articulo: compra.articulo ?? "",
-        cantidad: compra.cantidad?.toString() ?? "",
-        precio: compra.precio?.toString() ?? "",
-      });
-      setArticuloEncontrado({
-        idarticulo: compra.idarticulo,
-        codbarra: "",
-        nombre: compra.articulo,
-        precio: compra.precio,
-        stock: 0,
-      });
+      setFecha(compra.fecha ?? "");
+      setProveedor(compra.proveedor ?? "");
+      if (compra.articulos && compra.articulos.length > 0) {
+        setLineas(
+          compra.articulos.map((a) => ({
+            ...a,
+            precioUnitario: a.cantidad > 0 ? a.total / a.cantidad : 0,
+          }))
+        );
+      } else {
+        setLineas([]);
+      }
     } else {
-      setFormData({
-        fecha: fechaHoy(),
-        proveedor: "",
-        idarticulo: "",
-        articulo: "",
-        cantidad: "",
-        precio: "",
-      });
-      setArticuloEncontrado(null);
+      setFecha(fechaHoy());
+      setProveedor("");
+      setLineas([]);
       setCodbarraBuscar("");
+      setArticuloEncontrado(null);
     }
   }, [compra]);
 
-  useEffect(() => {
-    const id = (formData.idarticulo ?? "").trim();
-    if (!id || compra) return;
-    const idEncontrado = (
-      articuloEncontrado?.idarticulo ?? articuloEncontrado?.id ?? ""
-    )
-      .trim()
-      .toLowerCase();
-    if (idEncontrado === id.toLowerCase()) return;
-    const t = setTimeout(async () => {
-      const art = await buscarArticulo(undefined, id);
-      if (art) aplicarArticulo(art);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [
-    formData.idarticulo,
-    compra,
-    articuloEncontrado?.idarticulo,
-    articuloEncontrado?.id,
-    buscarArticulo,
-    aplicarArticulo,
-  ]);
-
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
-  ) => {
-    setError("");
-    const { name, value } = e.target;
-    setFormData((prev) => ({ ...prev, [name]: value ?? "" }));
-  };
+  const totalCompra = lineas.reduce((sum, l) => sum + l.total, 0);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    if (lineas.length === 0) {
+      setError("Debe agregar al menos un artículo a la compra");
+      return;
+    }
+    if (!proveedor.trim()) {
+      setError("Debe seleccionar un proveedor");
+      return;
+    }
+
+    const articulos: ArticuloCompra[] = lineas.map(
+      ({ idarticulo, nombre, cantidad, total }) => ({
+        idarticulo,
+        nombre,
+        cantidad,
+        total,
+      })
+    );
+
     setEnviando(true);
 
-    const cantidad = parseFloat(formData.cantidad) || 0;
-    const precio = parseFloat(formData.precio) || 0;
-
     const payload = {
-      fecha: formData.fecha.trim(),
-      proveedor: formData.proveedor.trim(),
-      idarticulo: formData.idarticulo.trim(),
-      articulo: formData.articulo.trim(),
-      cantidad,
-      precio,
+      fecha: fecha.trim(),
+      proveedor: proveedor.trim(),
+      articulos,
+      total: totalCompra,
     };
 
     try {
@@ -193,14 +235,8 @@ export default function FormCompras({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onCerrar()}
-    >
-      <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 overflow-y-auto">
+      <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl my-8">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">
             {compra ? "Editar compra" : "Nueva compra"}
@@ -234,8 +270,8 @@ export default function FormCompras({
               name="fecha"
               type="date"
               required
-              value={formData.fecha ?? ""}
-              onChange={handleChange}
+              value={fecha ?? ""}
+              onChange={(e) => setFecha(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             />
           </div>
@@ -251,8 +287,8 @@ export default function FormCompras({
               id="proveedor"
               name="proveedor"
               required
-              value={formData.proveedor}
-              onChange={handleChange}
+              value={proveedor}
+              onChange={(e) => setProveedor(e.target.value)}
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
             >
               <option value="">Seleccionar proveedor</option>
@@ -269,7 +305,7 @@ export default function FormCompras({
               htmlFor="codbarra"
               className="mb-1 block text-sm font-medium text-slate-700"
             >
-              Buscar artículo por código de barras
+              Buscar artículo (código de barras o ID)
             </label>
             <div className="flex gap-2">
               <input
@@ -282,7 +318,7 @@ export default function FormCompras({
                   (e.preventDefault(), handleBuscarPorCodbarra())
                 }
                 className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="Escanear o tipear código de barras"
+                placeholder="Escanear o tipear código"
               />
               <button
                 type="button"
@@ -295,121 +331,159 @@ export default function FormCompras({
             </div>
           </div>
 
+          {articuloEncontrado && (
+            <div className="rounded-lg bg-sky-50 border border-sky-200 px-3 py-3">
+              <p className="text-sm font-medium text-sky-800 mb-1">
+                {articuloEncontrado.nombre}
+              </p>
+              <p className="text-xs text-sky-700 mb-2">
+                Precio actual: {articuloEncontrado.precio.toLocaleString()} ·
+                Stock: {articuloEncontrado.stock}
+              </p>
+              <div className="flex gap-2 items-center flex-wrap">
+                <input
+                  type="number"
+                  min="1"
+                  value={cantidadActual}
+                  onChange={(e) => setCantidadActual(e.target.value)}
+                  className="w-20 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Cant."
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={precioActual}
+                  onChange={(e) => setPrecioActual(e.target.value)}
+                  className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="Precio"
+                />
+                <button
+                  type="button"
+                  onClick={handleAgregarAlCarrito}
+                  className="btn-primary text-sm py-1.5 px-3"
+                >
+                  Agregar a la compra
+                </button>
+              </div>
+            </div>
+          )}
+
           <div>
-            <label
-              htmlFor="idarticulo"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
-              ID artículo <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="idarticulo"
-              name="idarticulo"
-              type="text"
-              required
-              value={formData.idarticulo ?? ""}
-              onChange={handleChange}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              placeholder="Tipear ID del artículo (busca automáticamente)"
-            />
-            {buscando && !articuloEncontrado && (
-              <p className="mt-1 text-xs text-slate-500">Buscando artículo…</p>
-            )}
-            {articuloEncontrado && (
-              <div className="mt-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
-                <p className="text-sm font-medium text-sky-800">
-                  Precio actual:{" "}
-                  <span className="font-semibold">
-                    {articuloEncontrado.precio.toLocaleString()}
-                  </span>
-                </p>
-                <p className="text-sm font-medium text-sky-800">
-                  Stock actual:{" "}
-                  <span className="font-semibold">{articuloEncontrado.stock}</span>
-                </p>
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-slate-700">
+                Artículos en la compra
+              </span>
+              {lineas.length > 0 && (
+                <span className="text-xs text-slate-500">
+                  {lineas.length} artículo(s)
+                </span>
+              )}
+            </div>
+            {lineas.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 py-6 text-center text-slate-500 text-sm">
+                Busca artículos y agrégalos aquí
+              </div>
+            ) : (
+              <div className="rounded-lg border border-slate-200 overflow-hidden max-h-48 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="px-2 py-2 text-left font-medium text-slate-700">
+                        Artículo
+                      </th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">
+                        Cant
+                      </th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">
+                        P. unit.
+                      </th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">
+                        Total
+                      </th>
+                      <th className="w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lineas.map((l, i) => (
+                      <tr key={i} className="border-t border-slate-100">
+                        <td className="px-2 py-2 text-slate-800">{l.nombre}</td>
+                        <td className="px-2 py-2 text-right">
+                          <input
+                            type="number"
+                            min="1"
+                            value={l.cantidad}
+                            onChange={(e) =>
+                              actualizarLinea(
+                                i,
+                                parseInt(e.target.value, 10) || 1,
+                                l.precioUnitario
+                              )
+                            }
+                            className="w-14 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={l.precioUnitario}
+                            onChange={(e) =>
+                              actualizarLinea(
+                                i,
+                                l.cantidad,
+                                parseFloat(e.target.value) || 0
+                              )
+                            }
+                            className="w-16 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right font-medium">
+                          {l.total.toLocaleString()}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            onClick={() => quitarLinea(i)}
+                            className="text-red-500 hover:text-red-700 text-xs"
+                            aria-label="Quitar"
+                          >
+                            ✕
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
 
-          <div>
-            <label
-              htmlFor="articulo"
-              className="mb-1 block text-sm font-medium text-slate-700"
-            >
-              Artículo <span className="text-red-500">*</span>
-            </label>
-            <input
-              id="articulo"
-              name="articulo"
-              type="text"
-              required
-              value={formData.articulo ?? ""}
-              onChange={handleChange}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-              placeholder="Nombre del artículo"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label
-                htmlFor="cantidad"
-                className="mb-1 block text-sm font-medium text-slate-700"
-              >
-                Cantidad <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="cantidad"
-                name="cantidad"
-                type="number"
-                min="1"
-                step="1"
-                required
-                value={formData.cantidad ?? ""}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="0"
-              />
+          {lineas.length > 0 && (
+            <div className="rounded-lg bg-slate-100 px-4 py-3 flex justify-between items-center">
+              <span className="font-medium text-slate-700">
+                Total de la compra
+              </span>
+              <span className="text-lg font-bold text-slate-900">
+                {totalCompra.toLocaleString()}
+              </span>
             </div>
-            <div>
-              <label
-                htmlFor="precio"
-                className="mb-1 block text-sm font-medium text-slate-700"
-              >
-                Precio unitario <span className="text-red-500">*</span>
-              </label>
-              <input
-                id="precio"
-                name="precio"
-                type="number"
-                min="0"
-                step="0.01"
-                required
-                value={formData.precio ?? ""}
-                onChange={handleChange}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                placeholder="0"
-              />
-            </div>
-          </div>
+          )}
 
           <div className="mt-2 flex gap-2">
-            <button
-              type="button"
-              onClick={onCerrar}
-              className="btn-secondary flex-1"
-            >
+            <button type="button" onClick={onCerrar} className="btn-secondary flex-1">
               Cancelar
             </button>
             <button
               type="submit"
-              disabled={enviando}
+              disabled={enviando || lineas.length === 0}
               className="btn-primary flex-1 disabled:opacity-60"
             >
               {enviando
                 ? "Guardando…"
                 : compra
-                  ? "Actualizar compra"
+                  ? "Actualizar"
                   : "Crear compra"}
             </button>
           </div>

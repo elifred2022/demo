@@ -109,14 +109,8 @@ export default function FormCliente({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onCerrar()}
-    >
-      <div
-        className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">
             {esEdicion ? "Editar cliente" : "Crear nuevo cliente"}
