@@ -25,7 +25,8 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
         const matchId = art.idarticulo?.toLowerCase().includes(texto);
         const matchNombre = art.nombre.toLowerCase().includes(texto);
         const matchDesc = art.descripcion?.toLowerCase().includes(texto);
-        return matchCodBarra || matchId || matchNombre || matchDesc;
+        const matchFechaAlta = art.fecha_alta?.toLowerCase().includes(texto);
+        return matchCodBarra || matchId || matchNombre || matchDesc || matchFechaAlta;
       })
     : articulos;
 
@@ -112,7 +113,16 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
                     Nombre
                   </th>
                   <th className="px-3 sm:px-5 py-3 text-left text-xs sm:text-sm font-semibold text-sky-800">
+                    Fecha alta
+                  </th>
+                  <th className="px-3 sm:px-5 py-3 text-left text-xs sm:text-sm font-semibold text-sky-800">
                     Precio
+                  </th>
+                  <th className="px-3 sm:px-5 py-3 text-left text-xs sm:text-sm font-semibold text-sky-800">
+                    Por aplic
+                  </th>
+                  <th className="px-3 sm:px-5 py-3 text-left text-xs sm:text-sm font-semibold text-sky-800">
+                    Precio venta
                   </th>
                   <th className="px-3 sm:px-5 py-3 text-left text-xs sm:text-sm font-semibold text-sky-800">
                     Stock
@@ -126,7 +136,7 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
                 {articulosFiltrados.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={9}
                       className="px-4 py-12 text-center text-slate-500 bg-white"
                     >
                       {articulos.length === 0
@@ -149,8 +159,17 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
                       <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm font-medium text-slate-800">
                         {art.nombre}
                       </td>
+                      <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-slate-600 whitespace-nowrap">
+                        {art.fecha_alta ?? "—"}
+                      </td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-slate-700">
                         {art.precio.toLocaleString()}
+                      </td>
+                      <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-slate-700">
+                        {art.por_aplic.toLocaleString()}
+                      </td>
+                      <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-slate-700">
+                        {art.precio_venta.toLocaleString()}
                       </td>
                       <td className="px-3 sm:px-5 py-3 sm:py-4 text-xs sm:text-sm text-slate-700">
                         {art.stock}

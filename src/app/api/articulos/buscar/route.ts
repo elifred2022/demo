@@ -37,7 +37,10 @@ export async function GET(request: Request) {
         codbarra: encontrado.codbarra,
         nombre: encontrado.nombre,
         precio: encontrado.precio,
+        por_aplic: encontrado.por_aplic,
+        precio_venta: encontrado.precio_venta,
         stock: encontrado.stock,
+        fecha_alta: encontrado.fecha_alta,
       },
     });
   } catch (error) {

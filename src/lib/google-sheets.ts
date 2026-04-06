@@ -1,4 +1,5 @@
 import { google } from 'googleapis';
+import { calcularPrecioVenta } from '@/lib/precio-articulo';
 
 // Interfaces para los datos de Google Sheets
 export interface Articulo {
@@ -7,8 +8,12 @@ export interface Articulo {
   nombre: string;
   descripcion?: string;
   precio: number;
+  por_aplic: number;
+  precio_venta: number;
   stock: number;
   categoria?: string;
+  /** Fecha de alta en la hoja (columna fecha_alta) */
+  fecha_alta?: string;
 }
 
 /** Artículo individual dentro de una venta (array en campo nombre) */
@@ -149,8 +154,11 @@ export async function getArticulos(): Promise<Articulo[]> {
     nombre: headerIndex(['nombre']),
     descripcion: headerIndex(['descripcion', 'descripción']),
     precio: headerIndex(['precio']),
+    por_aplic: headerIndex(['por_aplic', 'por aplic', 'porc_aplic']),
+    precio_venta: headerIndex(['precio_venta', 'precio venta', 'precioventa']),
     stock: headerIndex(['stock', 'existencia', 'inventario']),
     categoria: headerIndex(['categoria', 'categoría']),
+    fecha_alta: headerIndex(['fecha_alta', 'fecha alta']),
   };
 
   return rows.slice(1).map((row) => {
@@ -167,8 +175,11 @@ export async function getArticulos(): Promise<Articulo[]> {
       nombre: get(idx.nombre),
       descripcion: idx.descripcion >= 0 ? get(idx.descripcion) : undefined,
       precio: getNum(idx.precio),
+      por_aplic: getNum(idx.por_aplic),
+      precio_venta: getNum(idx.precio_venta),
       stock: getNum(idx.stock),
       categoria: idx.categoria >= 0 ? get(idx.categoria) : undefined,
+      fecha_alta: idx.fecha_alta >= 0 ? get(idx.fecha_alta) : undefined,
     } satisfies Articulo;
   });
 }
@@ -180,6 +191,93 @@ export interface ArticuloNuevo {
   descripcion?: string;
   precio: number;
   stock: number;
+  /** % sobre precio (costo) para obtener precio_venta */
+  por_aplic?: number;
+  precio_venta?: number;
+  /** Si se informa, se escribe en columna fecha_alta (p. ej. alta de artículo) */
+  fecha_alta?: string;
+}
+
+function findArticuloHeaderCol(headers: string[], names: string[]): number {
+  for (const name of names) {
+    const i = headers.findIndex((h) => String(h ?? '').trim().toLowerCase() === name.toLowerCase());
+    if (i >= 0) return i;
+  }
+  return -1;
+}
+
+/** Resuelve por_aplic y precio_venta coherente con el precio base. */
+function valoresPorAplicYPrecioVenta(articulo: ArticuloNuevo): { porAplic: number; precioVenta: number } {
+  const porAplic = articulo.por_aplic ?? 0;
+  const precioVenta =
+    articulo.precio_venta !== undefined && !Number.isNaN(articulo.precio_venta)
+      ? articulo.precio_venta
+      : calcularPrecioVenta(articulo.precio, porAplic);
+  return { porAplic, precioVenta };
+}
+
+/**
+ * Construye una fila alineada a los encabezados de la hoja articulos.
+ */
+function mergeArticuloIntoRow(
+  headers: string[],
+  baseRow: unknown[],
+  articulo: ArticuloNuevo
+): (string | number)[] {
+  const { porAplic, precioVenta } = valoresPorAplicYPrecioVenta(articulo);
+  const len = Math.max(headers.length, baseRow.length);
+  const row: (string | number)[] = [];
+  for (let i = 0; i < len; i++) {
+    const v = baseRow[i];
+    if (v === undefined || v === null) {
+      row.push('');
+    } else if (typeof v === 'number') {
+      row.push(v);
+    } else {
+      row.push(String(v));
+    }
+  }
+
+  const set = (col: number, value: string | number) => {
+    if (col < 0) return;
+    while (row.length <= col) row.push('');
+    row[col] = value;
+  };
+
+  set(findArticuloHeaderCol(headers, ['codbarra', 'cod barra']), articulo.codbarra);
+  set(findArticuloHeaderCol(headers, ['id', 'idarticulo', 'id artículo']), articulo.idarticulo);
+  set(findArticuloHeaderCol(headers, ['nombre']), articulo.nombre);
+  const descCol = findArticuloHeaderCol(headers, ['descripcion', 'descripción']);
+  if (descCol >= 0) set(descCol, articulo.descripcion ?? '');
+  set(findArticuloHeaderCol(headers, ['precio']), articulo.precio);
+  set(findArticuloHeaderCol(headers, ['por_aplic', 'por aplic', 'porc_aplic']), porAplic);
+  set(
+    findArticuloHeaderCol(headers, ['precio_venta', 'precio venta', 'precioventa']),
+    precioVenta
+  );
+  set(findArticuloHeaderCol(headers, ['stock', 'existencia', 'inventario']), articulo.stock);
+
+  const fechaAltaCol = findArticuloHeaderCol(headers, ['fecha_alta', 'fecha alta']);
+  if (
+    fechaAltaCol >= 0 &&
+    articulo.fecha_alta !== undefined &&
+    String(articulo.fecha_alta).trim() !== ''
+  ) {
+    set(fechaAltaCol, String(articulo.fecha_alta).trim());
+  }
+
+  return row;
+}
+
+function sheetColumnLetter(zeroBasedIndex: number): string {
+  let n = zeroBasedIndex + 1;
+  let s = '';
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
 }
 
 /**
@@ -217,24 +315,27 @@ export async function insertarArticulo(articulo: ArticuloNuevo): Promise<void> {
   const sheets = await getGoogleSheetsClient();
   const spreadsheetId = getSpreadsheetId();
 
-  const values = [
-    [
-      articulo.codbarra,
-      articulo.idarticulo,
-      articulo.nombre,
-      articulo.descripcion ?? '',
-      articulo.precio,
-      articulo.stock,
-    ],
-  ];
+  const headerRes = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "'articulos'!A:Z",
+  });
+  const headerRows = headerRes.data.values;
+  const headers = headerRows?.[0] as string[] | undefined;
+  if (!headers?.length) {
+    throw new Error('La hoja articulos no tiene fila de encabezados');
+  }
+
+  const emptyBase = new Array(headers.length).fill('');
+  const row = mergeArticuloIntoRow(headers, emptyBase, articulo);
+  const lastLetter = sheetColumnLetter(Math.max(row.length - 1, 0));
 
   await sheets.spreadsheets.values.append({
     spreadsheetId,
-    range: "'articulos'!A:F",
+    range: `'articulos'!A:${lastLetter}`,
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
-      values,
+      values: [row],
     },
   });
 }
@@ -279,23 +380,16 @@ export async function actualizarArticulo(
   }
 
   const sheetRow = rowIndex + 1;
-  const range = `'articulos'!A${sheetRow}:F${sheetRow}`;
-  const values = [
-    [
-      articulo.codbarra,
-      articulo.idarticulo,
-      articulo.nombre,
-      articulo.descripcion ?? '',
-      articulo.precio,
-      articulo.stock,
-    ],
-  ];
+  const existingRow = rows[rowIndex] ?? [];
+  const newRow = mergeArticuloIntoRow(headers, existingRow, articulo);
+  const lastLetter = sheetColumnLetter(Math.max(newRow.length - 1, 0));
+  const range = `'articulos'!A${sheetRow}:${lastLetter}${sheetRow}`;
 
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values },
+    requestBody: { values: [newRow] },
   });
 }
 
@@ -436,6 +530,7 @@ export async function actualizarPrecioYStockArticulo(
   const idCol = findCol(['id', 'idarticulo', 'id artículo', 'id articulo', 'codigo', 'código']);
   const precioCol = findCol(['precio']);
   const stockCol = findCol(['stock', 'existencia', 'inventario']);
+  const precioVentaCol = findCol(['precio_venta', 'precio venta', 'precioventa']);
   if (idCol < 0 || precioCol < 0 || stockCol < 0) {
     throw new Error(
       `Columnas no encontradas en articulos. Encontradas: ${JSON.stringify(headers)}`
@@ -450,20 +545,30 @@ export async function actualizarPrecioYStockArticulo(
   }
 
   const nuevoStock = articulo.stock + cantidadAAgregar;
+  const nuevoPrecioVenta = calcularPrecioVenta(nuevoPrecio, articulo.por_aplic);
   const sheetRow = rowIndex + 1;
   const toCol = (n: number): string =>
     n < 26 ? String.fromCharCode(65 + n) : toCol(Math.floor(n / 26) - 1) + String.fromCharCode(65 + (n % 26));
   const precioCell = `${toCol(precioCol)}${sheetRow}`;
   const stockCell = `${toCol(stockCol)}${sheetRow}`;
 
+  const batchData: { range: string; values: (string | number)[][] }[] = [
+    { range: `'${sheetTitle}'!${precioCell}`, values: [[nuevoPrecio]] },
+    { range: `'${sheetTitle}'!${stockCell}`, values: [[nuevoStock]] },
+  ];
+  if (precioVentaCol >= 0) {
+    const precioVentaCell = `${toCol(precioVentaCol)}${sheetRow}`;
+    batchData.push({
+      range: `'${sheetTitle}'!${precioVentaCell}`,
+      values: [[nuevoPrecioVenta]],
+    });
+  }
+
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: {
       valueInputOption: 'USER_ENTERED',
-      data: [
-        { range: `'${sheetTitle}'!${precioCell}`, values: [[nuevoPrecio]] },
-        { range: `'${sheetTitle}'!${stockCell}`, values: [[nuevoStock]] },
-      ],
+      data: batchData,
     },
   });
 }

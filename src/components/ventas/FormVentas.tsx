@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { VentaList, ArticuloVenta, Cliente } from "@/lib/google-sheets";
+import { calcularPrecioVenta } from "@/lib/precio-articulo";
 
 interface ArticuloEncontrado {
   id?: string;
@@ -10,7 +11,18 @@ interface ArticuloEncontrado {
   codbarra: string;
   nombre: string;
   precio: number;
+  por_aplic?: number;
+  precio_venta?: number;
   stock: number;
+}
+
+/** Precio unitario de venta según tabla articulos: precio_venta o precio + % */
+function precioUnitarioVentaDesdeArticulo(art: ArticuloEncontrado): number {
+  const pv = art.precio_venta;
+  if (pv != null && typeof pv === "number" && !Number.isNaN(pv)) {
+    return pv;
+  }
+  return calcularPrecioVenta(art.precio, art.por_aplic ?? 0);
 }
 
 interface LineaVenta extends ArticuloVenta {
@@ -56,13 +68,14 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
 
   const agregarLinea = useCallback((art: ArticuloEncontrado, cantidad: number) => {
     const idArt = art.idarticulo ?? art.id ?? "";
-    const total = cantidad * art.precio;
+    const unit = precioUnitarioVentaDesdeArticulo(art);
+    const total = cantidad * unit;
     const nueva: LineaVenta = {
       idarticulo: idArt,
       nombre: art.nombre ?? "",
       cantidad,
       total,
-      precioUnitario: art.precio,
+      precioUnitario: unit,
     };
     setLineas((prev) => {
       const existente = prev.find(
@@ -309,7 +322,13 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
                 {articuloEncontrado.nombre}
               </p>
               <p className="text-xs text-sky-700 mb-2">
-                Precio: {articuloEncontrado.precio.toLocaleString()} · Stock: {articuloEncontrado.stock}
+                Costo: {articuloEncontrado.precio.toLocaleString()}
+                {articuloEncontrado.por_aplic != null && articuloEncontrado.por_aplic !== 0 && (
+                  <> · % aplic: {articuloEncontrado.por_aplic}</>
+                )}
+                {" · "}
+                P. venta: {precioUnitarioVentaDesdeArticulo(articuloEncontrado).toLocaleString()} · Stock:{" "}
+                {articuloEncontrado.stock}
               </p>
               <div className="flex gap-2 items-center">
                 <input

@@ -32,7 +32,18 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { codbarra, id, idarticulo, nombre, descripcion, precio, stock } = body;
+    const {
+      codbarra,
+      id,
+      idarticulo,
+      nombre,
+      descripcion,
+      precio,
+      stock,
+      por_aplic,
+      precio_venta,
+      fecha_alta,
+    } = body;
     const idArt = idarticulo ?? id;
 
     if (!idArt?.trim() || !nombre?.trim()) {
@@ -53,6 +64,11 @@ export async function POST(request: Request) {
       }
     }
 
+    const fechaAltaStr =
+      fecha_alta != null && String(fecha_alta).trim() !== ""
+        ? String(fecha_alta).trim()
+        : new Date().toISOString().split("T")[0];
+
     const articulo = {
       codbarra: codbarraStr,
       idarticulo: String(idArt).trim(),
@@ -60,6 +76,9 @@ export async function POST(request: Request) {
       descripcion: descripcion != null ? String(descripcion).trim() : "",
       precio: Number(precio) || 0,
       stock: Number(stock) || 0,
+      por_aplic: por_aplic != null ? Number(por_aplic) : undefined,
+      precio_venta: precio_venta != null ? Number(precio_venta) : undefined,
+      fecha_alta: fechaAltaStr,
     };
 
     await insertarArticulo(articulo);

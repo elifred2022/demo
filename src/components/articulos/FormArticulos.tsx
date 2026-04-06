@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import type { Articulo } from "@/lib/google-sheets";
+import { calcularPrecioVenta } from "@/lib/precio-articulo";
 
 interface FormArticulosProps {
   onCerrar: () => void;
@@ -25,6 +26,7 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
     nombre: articulo?.nombre ?? "",
     descripcion: articulo?.descripcion ?? "",
     precio: articulo?.precio?.toString() ?? "",
+    por_aplic: articulo?.por_aplic?.toString() ?? "",
     stock: articulo?.stock?.toString() ?? "",
   });
 
@@ -36,10 +38,21 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
         nombre: articulo.nombre,
         descripcion: articulo.descripcion ?? "",
         precio: articulo.precio.toString(),
+        por_aplic: articulo.por_aplic?.toString() ?? "",
         stock: articulo.stock.toString(),
       });
       setCodigoExiste(false);
       setCodbarraExiste(false);
+    } else {
+      setFormData({
+        codbarra: "",
+        idarticulo: "",
+        nombre: "",
+        descripcion: "",
+        precio: "",
+        por_aplic: "",
+        stock: "",
+      });
     }
   }, [articulo]);
 
@@ -116,6 +129,12 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
     return () => clearTimeout(tiempo);
   }, [formData.codbarra, verificarCodbarra]);
 
+  const precioVentaCalculado = useMemo(() => {
+    const p = parseFloat(formData.precio) || 0;
+    const pct = parseFloat(formData.por_aplic) || 0;
+    return calcularPrecioVenta(p, pct);
+  }, [formData.precio, formData.por_aplic]);
+
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
@@ -137,6 +156,8 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
       descripcion: formData.descripcion.trim() || undefined,
       precio: parseFloat(formData.precio) || 0,
       stock: parseInt(formData.stock, 10) || 0,
+      por_aplic: parseFloat(formData.por_aplic) || 0,
+      precio_venta: precioVentaCalculado,
     };
 
     try {
@@ -158,7 +179,15 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
 
       onCerrar();
       onMutate?.() ?? router.refresh();
-      setFormData({ codbarra: "", idarticulo: "", nombre: "", descripcion: "", precio: "", stock: "" });
+      setFormData({
+        codbarra: "",
+        idarticulo: "",
+        nombre: "",
+        descripcion: "",
+        precio: "",
+        por_aplic: "",
+        stock: "",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");
     } finally {
@@ -324,6 +353,49 @@ export default function FormArticulos({ onCerrar, articulo, onMutate }: FormArti
                 onChange={handleChange}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 placeholder="0"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label
+                htmlFor="por_aplic"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                % a aplicar sobre precio
+              </label>
+              <input
+                id="por_aplic"
+                name="por_aplic"
+                type="number"
+                step="0.01"
+                value={formData.por_aplic}
+                onChange={handleChange}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                placeholder="Ej: 15"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Precio venta = precio × (1 + % / 100)
+              </p>
+            </div>
+            <div>
+              <label
+                htmlFor="precio_venta_display"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Precio venta (calculado)
+              </label>
+              <input
+                id="precio_venta_display"
+                type="text"
+                readOnly
+                value={precioVentaCalculado.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800"
+                aria-readonly="true"
               />
             </div>
           </div>

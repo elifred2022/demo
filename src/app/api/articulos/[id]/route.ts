@@ -30,7 +30,7 @@ export async function PUT(
       );
     }
     const body = await request.json();
-    const { codbarra, nombre, descripcion, precio, stock } = body;
+    const { codbarra, nombre, descripcion, precio, stock, por_aplic, precio_venta } = body;
     const nuevoId = (body.idarticulo ?? body.id) != null ? String(body.idarticulo ?? body.id).trim() : id;
 
     if (!nombre?.trim()) {
@@ -68,6 +68,8 @@ export async function PUT(
       descripcion: descripcion != null ? String(descripcion).trim() : "",
       precio: Number(precio) || 0,
       stock: Number(stock) || 0,
+      por_aplic: por_aplic != null ? Number(por_aplic) : undefined,
+      precio_venta: precio_venta != null ? Number(precio_venta) : undefined,
     });
     return NextResponse.json({ success: true });
   } catch (error) {
