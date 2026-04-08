@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import type { CompraList, ArticuloCompra, Proveedor } from "@/lib/google-sheets";
+import { calcularPrecioVenta } from "@/lib/precio-articulo";
 
 interface ArticuloEncontrado {
   id?: string;
@@ -10,11 +11,15 @@ interface ArticuloEncontrado {
   codbarra: string;
   nombre: string;
   precio: number;
+  por_aplic?: number;
+  precio_venta?: number;
   stock: number;
 }
 
 interface LineaCompra extends ArticuloCompra {
   precioUnitario: number;
+  por_aplic: number;
+  precio_venta: number;
 }
 
 interface FormComprasProps {
@@ -35,6 +40,9 @@ export default function FormCompras({
   const [error, setError] = useState("");
   const [codbarraBuscar, setCodbarraBuscar] = useState("");
   const [buscando, setBuscando] = useState(false);
+  const [nombreBuscar, setNombreBuscar] = useState("");
+  const [buscandoNombre, setBuscandoNombre] = useState(false);
+  const [sugerenciasNombre, setSugerenciasNombre] = useState<ArticuloEncontrado[]>([]);
   const [articuloEncontrado, setArticuloEncontrado] =
     useState<ArticuloEncontrado | null>(null);
   const fechaHoy = () => new Date().toISOString().split("T")[0];
@@ -43,6 +51,7 @@ export default function FormCompras({
   const [lineas, setLineas] = useState<LineaCompra[]>([]);
   const [cantidadActual, setCantidadActual] = useState("1");
   const [precioActual, setPrecioActual] = useState("");
+  const [porAplicActual, setPorAplicActual] = useState("0");
 
   const buscarArticulo = useCallback(async (codbarra?: string, id?: string) => {
     if ((!codbarra || !codbarra.trim()) && (!id || !id.trim())) return null;
@@ -62,15 +71,23 @@ export default function FormCompras({
   }, []);
 
   const agregarLinea = useCallback(
-    (art: ArticuloEncontrado, cantidad: number, precioUnit: number) => {
+    (
+      art: ArticuloEncontrado,
+      cantidad: number,
+      precioUnit: number,
+      porAplic: number
+    ) => {
       const idArt = art.idarticulo ?? art.id ?? "";
       const total = cantidad * precioUnit;
+      const precioVenta = calcularPrecioVenta(precioUnit, porAplic);
       const nueva: LineaCompra = {
         idarticulo: idArt,
         nombre: art.nombre ?? "",
         cantidad,
         total,
         precioUnitario: precioUnit,
+        por_aplic: porAplic,
+        precio_venta: precioVenta,
       };
       setLineas((prev) => {
         const existente = prev.find(
@@ -84,6 +101,8 @@ export default function FormCompras({
                   cantidad: l.cantidad + cantidad,
                   total: (l.cantidad + cantidad) * precioUnit,
                   precioUnitario: precioUnit,
+                  por_aplic: porAplic,
+                  precio_venta: precioVenta,
                 }
               : l
           );
@@ -93,6 +112,7 @@ export default function FormCompras({
       setArticuloEncontrado(null);
       setCantidadActual("1");
       setPrecioActual("");
+      setPorAplicActual("0");
     },
     []
   );
@@ -102,17 +122,22 @@ export default function FormCompras({
   }, []);
 
   const actualizarLinea = useCallback(
-    (index: number, nuevaCantidad: number, nuevoPrecio: number) => {
+    (index: number, nuevaCantidad: number, nuevoPrecio: number, nuevoPorAplic?: number) => {
       if (nuevaCantidad < 1 || nuevoPrecio < 0) return;
       setLineas((prev) =>
         prev.map((l, i) =>
           i === index
-            ? {
-                ...l,
-                cantidad: nuevaCantidad,
-                precioUnitario: nuevoPrecio,
-                total: nuevaCantidad * nuevoPrecio,
-              }
+            ? (() => {
+                const porAplic = nuevoPorAplic ?? l.por_aplic ?? 0;
+                return {
+                  ...l,
+                  cantidad: nuevaCantidad,
+                  precioUnitario: nuevoPrecio,
+                  total: nuevaCantidad * nuevoPrecio,
+                  por_aplic: porAplic,
+                  precio_venta: calcularPrecioVenta(nuevoPrecio, porAplic),
+                };
+              })()
             : l
         )
       );
@@ -128,6 +153,7 @@ export default function FormCompras({
     if (art) {
       setArticuloEncontrado(art);
       setPrecioActual(art.precio?.toString() ?? "");
+      setPorAplicActual((Number(art.por_aplic) || 0).toString());
       setCodbarraBuscar("");
     } else {
       setError("No se encontró artículo con ese código de barras o ID");
@@ -138,6 +164,7 @@ export default function FormCompras({
     if (!articuloEncontrado) return;
     const cant = parseInt(cantidadActual, 10) || 1;
     const prec = parseFloat(precioActual) || articuloEncontrado.precio || 0;
+    const porAplic = parseFloat(porAplicActual) || 0;
     if (cant < 1) {
       setError("La cantidad debe ser al menos 1");
       return;
@@ -146,8 +173,21 @@ export default function FormCompras({
       setError("El precio debe ser mayor o igual a 0");
       return;
     }
+    if (porAplic < 0) {
+      setError("El % por_aplic debe ser mayor o igual a 0");
+      return;
+    }
     setError("");
-    agregarLinea(articuloEncontrado, cant, prec);
+    agregarLinea(articuloEncontrado, cant, prec, porAplic);
+  };
+
+  const handleSeleccionarSugerencia = (art: ArticuloEncontrado) => {
+    setArticuloEncontrado(art);
+    setPrecioActual(art.precio?.toString() ?? "");
+    setPorAplicActual((Number(art.por_aplic) || 0).toString());
+    setNombreBuscar("");
+    setSugerenciasNombre([]);
+    setError("");
   };
 
   useEffect(() => {
@@ -159,6 +199,8 @@ export default function FormCompras({
           compra.articulos.map((a) => ({
             ...a,
             precioUnitario: a.cantidad > 0 ? a.total / a.cantidad : 0,
+            por_aplic: Number(a.por_aplic) || 0,
+            precio_venta: Number(a.precio_venta) || 0,
           }))
         );
       } else {
@@ -169,9 +211,38 @@ export default function FormCompras({
       setProveedor("");
       setLineas([]);
       setCodbarraBuscar("");
+      setNombreBuscar("");
+      setSugerenciasNombre([]);
       setArticuloEncontrado(null);
+      setPorAplicActual("0");
     }
   }, [compra]);
+
+  useEffect(() => {
+    const texto = nombreBuscar.trim();
+    if (!texto || texto.length < 2) {
+      setSugerenciasNombre([]);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setBuscandoNombre(true);
+      try {
+        const params = new URLSearchParams();
+        params.set("nombre", texto);
+        const res = await fetch(`/api/articulos/buscar?${params}`);
+        const data = await res.json();
+        const resultados = (data.articulos as ArticuloEncontrado[] | undefined) ?? [];
+        setSugerenciasNombre(resultados);
+      } catch {
+        setSugerenciasNombre([]);
+      } finally {
+        setBuscandoNombre(false);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [nombreBuscar]);
 
   const totalCompra = lineas.reduce((sum, l) => sum + l.total, 0);
 
@@ -188,11 +259,13 @@ export default function FormCompras({
     }
 
     const articulos: ArticuloCompra[] = lineas.map(
-      ({ idarticulo, nombre, cantidad, total }) => ({
+      ({ idarticulo, nombre, cantidad, total, por_aplic, precio_venta }) => ({
         idarticulo,
         nombre,
         cantidad,
         total,
+        por_aplic,
+        precio_venta,
       })
     );
 
@@ -331,6 +404,46 @@ export default function FormCompras({
             </div>
           </div>
 
+          <div>
+            <label
+              htmlFor="nombreArticulo"
+              className="mb-1 block text-sm font-medium text-slate-700"
+            >
+              Buscar artículo por nombre
+            </label>
+            <div className="relative">
+              <input
+                id="nombreArticulo"
+                type="text"
+                value={nombreBuscar}
+                onChange={(e) => setNombreBuscar(e.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                placeholder="Escribir nombre del artículo"
+              />
+              {(buscandoNombre || sugerenciasNombre.length > 0) && (
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {buscandoNombre ? (
+                    <div className="px-3 py-2 text-sm text-slate-500">Buscando...</div>
+                  ) : (
+                    sugerenciasNombre.map((art) => (
+                      <button
+                        key={art.idarticulo ?? art.id ?? art.nombre}
+                        type="button"
+                        onClick={() => handleSeleccionarSugerencia(art)}
+                        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm hover:bg-sky-50 last:border-b-0"
+                      >
+                        <span className="font-medium text-slate-800">{art.nombre}</span>
+                        <span className="ml-2 text-xs text-slate-500">
+                          ({art.idarticulo ?? art.id}) · Stock: {art.stock}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           {articuloEncontrado && (
             <div className="rounded-lg bg-sky-50 border border-sky-200 px-3 py-3">
               <p className="text-sm font-medium text-sky-800 mb-1">
@@ -358,6 +471,22 @@ export default function FormCompras({
                   className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
                   placeholder="Precio"
                 />
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={porAplicActual}
+                  onChange={(e) => setPorAplicActual(e.target.value)}
+                  className="w-24 rounded-lg border border-slate-300 px-2 py-1.5 text-sm"
+                  placeholder="% por_aplic"
+                />
+                <span className="text-xs text-slate-700">
+                  P. venta:{" "}
+                  {calcularPrecioVenta(
+                    parseFloat(precioActual) || articuloEncontrado.precio || 0,
+                    parseFloat(porAplicActual) || 0
+                  ).toLocaleString()}
+                </span>
                 <button
                   type="button"
                   onClick={handleAgregarAlCarrito}
@@ -399,6 +528,12 @@ export default function FormCompras({
                         P. unit.
                       </th>
                       <th className="px-2 py-2 text-right font-medium text-slate-700">
+                        % apl.
+                      </th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">
+                        P. venta
+                      </th>
+                      <th className="px-2 py-2 text-right font-medium text-slate-700">
                         Total
                       </th>
                       <th className="w-8"></th>
@@ -417,7 +552,8 @@ export default function FormCompras({
                               actualizarLinea(
                                 i,
                                 parseInt(e.target.value, 10) || 1,
-                                l.precioUnitario
+                                l.precioUnitario,
+                                l.por_aplic
                               )
                             }
                             className="w-14 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
@@ -433,11 +569,32 @@ export default function FormCompras({
                               actualizarLinea(
                                 i,
                                 l.cantidad,
-                                parseFloat(e.target.value) || 0
+                                parseFloat(e.target.value) || 0,
+                                l.por_aplic
                               )
                             }
                             className="w-16 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
                           />
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={l.por_aplic}
+                            onChange={(e) =>
+                              actualizarLinea(
+                                i,
+                                l.cantidad,
+                                l.precioUnitario,
+                                parseFloat(e.target.value) || 0
+                              )
+                            }
+                            className="w-14 text-right rounded border border-slate-200 px-1 py-0.5 text-sm"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-right font-medium">
+                          {l.precio_venta.toLocaleString()}
                         </td>
                         <td className="px-2 py-2 text-right font-medium">
                           {l.total.toLocaleString()}

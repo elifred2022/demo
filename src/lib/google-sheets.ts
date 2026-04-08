@@ -67,6 +67,8 @@ export interface ArticuloCompra {
   nombre: string;
   cantidad: number;
   total: number;
+  por_aplic?: number;
+  precio_venta?: number;
 }
 
 /** Compra tal como se muestra en la lista. articulo puede ser JSON (array) o string legacy */
@@ -494,7 +496,8 @@ export async function descontarStockArticulo(idarticulo: string, cantidad: numbe
 export async function actualizarPrecioYStockArticulo(
   idarticulo: string,
   nuevoPrecio: number,
-  cantidadAAgregar: number
+  cantidadAAgregar: number,
+  porAplicOverride?: number
 ): Promise<void> {
   if (!idarticulo?.trim()) return;
 
@@ -530,6 +533,7 @@ export async function actualizarPrecioYStockArticulo(
   const idCol = findCol(['id', 'idarticulo', 'id artículo', 'id articulo', 'codigo', 'código']);
   const precioCol = findCol(['precio']);
   const stockCol = findCol(['stock', 'existencia', 'inventario']);
+  const porAplicCol = findCol(['por_aplic', 'por aplic', 'porc_aplic']);
   const precioVentaCol = findCol(['precio_venta', 'precio venta', 'precioventa']);
   if (idCol < 0 || precioCol < 0 || stockCol < 0) {
     throw new Error(
@@ -545,7 +549,11 @@ export async function actualizarPrecioYStockArticulo(
   }
 
   const nuevoStock = articulo.stock + cantidadAAgregar;
-  const nuevoPrecioVenta = calcularPrecioVenta(nuevoPrecio, articulo.por_aplic);
+  const porAplicFinal =
+    porAplicOverride !== undefined && !Number.isNaN(porAplicOverride)
+      ? porAplicOverride
+      : articulo.por_aplic;
+  const nuevoPrecioVenta = calcularPrecioVenta(nuevoPrecio, porAplicFinal);
   const sheetRow = rowIndex + 1;
   const toCol = (n: number): string =>
     n < 26 ? String.fromCharCode(65 + n) : toCol(Math.floor(n / 26) - 1) + String.fromCharCode(65 + (n % 26));
@@ -556,6 +564,13 @@ export async function actualizarPrecioYStockArticulo(
     { range: `'${sheetTitle}'!${precioCell}`, values: [[nuevoPrecio]] },
     { range: `'${sheetTitle}'!${stockCell}`, values: [[nuevoStock]] },
   ];
+  if (porAplicCol >= 0) {
+    const porAplicCell = `${toCol(porAplicCol)}${sheetRow}`;
+    batchData.push({
+      range: `'${sheetTitle}'!${porAplicCell}`,
+      values: [[porAplicFinal]],
+    });
+  }
   if (precioVentaCol >= 0) {
     const precioVentaCell = `${toCol(precioVentaCol)}${sheetRow}`;
     batchData.push({

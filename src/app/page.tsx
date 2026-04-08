@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Package, Receipt, ShoppingCart, Truck, Users } from "lucide-react";
+import { BarChart3, Package, Receipt, ShoppingCart, Truck, Users } from "lucide-react";
 
 const navLinkClass =
   "btn-primary w-full sm:w-auto sm:min-w-[180px] gap-2";
@@ -46,6 +46,12 @@ export default function Home() {
             <Link href="/listaclientes" className={navLinkClass}>
               <Users className="size-5 shrink-0" aria-hidden />
               Clientes
+            </Link>
+          </div>
+          <div className="flex flex-col gap-4 sm:flex-row mt-8 pt-8 border-t border-slate-100">
+            <Link href="/indicadores" className={navLinkClass}>
+              <BarChart3 className="size-5 shrink-0" aria-hidden />
+              Indicadores
             </Link>
           </div>
         </div>

@@ -3,8 +3,35 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import type { CompraList, ArticuloCompra, Proveedor } from "@/lib/google-sheets";
 import FormCompras from "./FormCompras";
+
+function parseFechaCompra(fecha: string): Date | null {
+  const raw = String(fecha ?? "").trim();
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]) - 1;
+    const day = Number(isoMatch[3]);
+    const date = new Date(year, month, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const latamMatch = raw.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (latamMatch) {
+    const day = Number(latamMatch[1]);
+    const month = Number(latamMatch[2]) - 1;
+    const year = Number(latamMatch[3]);
+    const date = new Date(year, month, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
 
 interface ModalVerCompraProps {
   compra: CompraList;
@@ -122,30 +149,42 @@ export default function ListCompras({
   const [compraViendo, setCompraViendo] = useState<CompraList | null>(null);
   const [eliminando, setEliminando] = useState<string | null>(null);
   const [filtro, setFiltro] = useState("");
+  const [fechaDesde, setFechaDesde] = useState("");
+  const [fechaHasta, setFechaHasta] = useState("");
 
-  const comprasFiltradas = filtro.trim()
-    ? compras.filter((c) => {
-        const texto = filtro.trim().toLowerCase();
-        const matchId = c.idcompra.toLowerCase().includes(texto);
-        const matchFecha = c.fecha.toLowerCase().includes(texto);
-        const matchProveedor = c.proveedor.toLowerCase().includes(texto);
-        const matchTotal = c.total.toString().includes(texto);
-        const matchArticulo = c.articulo.toLowerCase().includes(texto);
-        const matchArticulos = c.articulos?.some(
-          (a) =>
-            a.nombre?.toLowerCase().includes(texto) ||
-            a.idarticulo?.toLowerCase().includes(texto)
-        );
-        return (
-          matchId ||
-          matchFecha ||
-          matchProveedor ||
-          matchArticulo ||
-          matchTotal ||
-          matchArticulos
-        );
-      })
-    : compras;
+  const comprasFiltradas = compras.filter((c) => {
+    const texto = filtro.trim().toLowerCase();
+    const cumpleTexto = texto
+      ? (() => {
+          const matchId = c.idcompra.toLowerCase().includes(texto);
+          const matchFecha = c.fecha.toLowerCase().includes(texto);
+          const matchProveedor = c.proveedor.toLowerCase().includes(texto);
+          const matchTotal = c.total.toString().includes(texto);
+          const matchArticulo = c.articulo.toLowerCase().includes(texto);
+          const matchArticulos = c.articulos?.some(
+            (a) =>
+              a.nombre?.toLowerCase().includes(texto) ||
+              a.idarticulo?.toLowerCase().includes(texto)
+          );
+          return (
+            matchId ||
+            matchFecha ||
+            matchProveedor ||
+            matchArticulo ||
+            matchTotal ||
+            matchArticulos
+          );
+        })()
+      : true;
+
+    const fechaCompra = parseFechaCompra(c.fecha);
+    const desde = fechaDesde ? new Date(`${fechaDesde}T00:00:00`) : null;
+    const hasta = fechaHasta ? new Date(`${fechaHasta}T23:59:59`) : null;
+    const cumpleFechaDesde = !desde || (fechaCompra ? fechaCompra >= desde : false);
+    const cumpleFechaHasta = !hasta || (fechaCompra ? fechaCompra <= hasta : false);
+
+    return cumpleTexto && cumpleFechaDesde && cumpleFechaHasta;
+  });
 
   function abrirCrear() {
     setCompraEditando(null);
@@ -164,6 +203,12 @@ export default function ListCompras({
 
   function abrirVer(c: CompraList) {
     setCompraViendo(c);
+  }
+
+  function limpiarFiltros() {
+    setFiltro("");
+    setFechaDesde("");
+    setFechaHasta("");
   }
 
   function cerrarVer() {
@@ -195,6 +240,52 @@ export default function ListCompras({
     }
   }
 
+  function descargarExcel() {
+    const filas = comprasFiltradas.flatMap((c) => {
+      if (c.articulos?.length) {
+        return c.articulos.map((a) => {
+          const cantidad = Number(a.cantidad) || 0;
+          const subtotal = Number(a.total) || 0;
+          const costoUnitario = cantidad > 0 ? subtotal / cantidad : 0;
+          return {
+            "Id de la compra": c.idcompra,
+            Fecha: c.fecha,
+            Cliente: c.proveedor || "",
+            Articulo: a.nombre || "",
+            Cantidad: cantidad,
+            "Costo unitario": costoUnitario,
+            Subtotal: subtotal,
+          };
+        });
+      }
+
+      const cantidadLegacy = Number(c.cantidad) || 0;
+      const subtotalLegacy = Number(c.total) || 0;
+      const costoUnitarioLegacy = cantidadLegacy > 0 ? subtotalLegacy / cantidadLegacy : 0;
+      return [
+        {
+          "Id de la compra": c.idcompra,
+          Fecha: c.fecha,
+          Cliente: c.proveedor || "",
+          Articulo: c.articulo || "",
+          Cantidad: cantidadLegacy,
+          "Costo unitario": costoUnitarioLegacy,
+          Subtotal: subtotalLegacy,
+        },
+      ];
+    });
+
+    if (filas.length === 0) {
+      alert("No hay datos para exportar.");
+      return;
+    }
+
+    const hoja = XLSX.utils.json_to_sheet(filas);
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, "Compras");
+    XLSX.writeFile(libro, `compras_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-6xl">
@@ -205,13 +296,22 @@ export default function ListCompras({
           <h1 className="text-xl sm:text-2xl font-semibold text-slate-800">
             Lista de compras
           </h1>
-          <button
-            type="button"
-            onClick={abrirCrear}
-            className="btn-primary w-fit"
-          >
-            + Nueva compra
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={descargarExcel}
+              className="w-fit rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            >
+              Descargar Excel
+            </button>
+            <button
+              type="button"
+              onClick={abrirCrear}
+              className="btn-primary w-fit"
+            >
+              + Nueva compra
+            </button>
+          </div>
         </div>
         {mostrarForm && (
           <FormCompras
@@ -231,14 +331,37 @@ export default function ListCompras({
             }}
           />
         )}
-        <div className="mb-4">
+        <div className="mb-4 flex flex-col sm:flex-row sm:flex-wrap gap-3">
           <input
             type="text"
             value={filtro}
             onChange={(e) => setFiltro(e.target.value)}
             placeholder="Filtrar por id, fecha, proveedor, artículos..."
-            className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            className="w-full sm:w-80 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
           />
+          <input
+            type="date"
+            value={fechaDesde}
+            onChange={(e) => setFechaDesde(e.target.value)}
+            className="w-full sm:w-44 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            aria-label="Filtrar desde fecha"
+            title="Desde"
+          />
+          <input
+            type="date"
+            value={fechaHasta}
+            onChange={(e) => setFechaHasta(e.target.value)}
+            className="w-full sm:w-44 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+            aria-label="Filtrar hasta fecha"
+            title="Hasta"
+          />
+          <button
+            type="button"
+            onClick={limpiarFiltros}
+            className="btn-secondary w-full sm:w-auto"
+          >
+            Limpiar filtros
+          </button>
         </div>
         <div className="rounded-xl overflow-hidden border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">

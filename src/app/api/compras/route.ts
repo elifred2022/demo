@@ -65,8 +65,14 @@ export async function POST(request: Request) {
         const cant = Number(a?.cantidad) || 0;
         const totalArt = Number(a?.total) || 0;
         const precUnit = cant > 0 ? totalArt / cant : 0;
+        const porAplic = Number(a?.por_aplic);
         if (idArt && cant > 0) {
-          await actualizarPrecioYStockArticulo(idArt, precUnit, cant);
+          await actualizarPrecioYStockArticulo(
+            idArt,
+            precUnit,
+            cant,
+            Number.isNaN(porAplic) ? undefined : porAplic
+          );
           actualizados.push({ id: idArt, cant });
         }
       }
@@ -90,11 +96,21 @@ export async function POST(request: Request) {
             nombre?: string;
             cantidad?: number;
             total?: number;
+            por_aplic?: number;
+            precio_venta?: number;
           }) => ({
             idarticulo: String(a?.idarticulo ?? "").trim(),
             nombre: String(a?.nombre ?? "").trim(),
             cantidad: Number(a?.cantidad) || 0,
             total: Number(a?.total) || 0,
+            por_aplic:
+              a?.por_aplic != null && !Number.isNaN(Number(a.por_aplic))
+                ? Number(a.por_aplic)
+                : undefined,
+            precio_venta:
+              a?.precio_venta != null && !Number.isNaN(Number(a.precio_venta))
+                ? Number(a.precio_venta)
+                : undefined,
           })
         ),
         total: tot,

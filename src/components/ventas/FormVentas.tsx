@@ -40,7 +40,10 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
   const [codbarraBuscar, setCodbarraBuscar] = useState("");
+  const [nombreBuscar, setNombreBuscar] = useState("");
   const [buscando, setBuscando] = useState(false);
+  const [buscandoNombre, setBuscandoNombre] = useState(false);
+  const [sugerenciasNombre, setSugerenciasNombre] = useState<ArticuloEncontrado[]>([]);
   const [articuloEncontrado, setArticuloEncontrado] = useState<ArticuloEncontrado | null>(null);
   const fechaHoy = () => new Date().toISOString().split("T")[0];
   const [fecha, setFecha] = useState(venta?.fecha ?? fechaHoy());
@@ -130,6 +133,13 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
     }
   };
 
+  const handleSeleccionarSugerencia = (art: ArticuloEncontrado) => {
+    setArticuloEncontrado(art);
+    setNombreBuscar("");
+    setSugerenciasNombre([]);
+    setError("");
+  };
+
   const handleAgregarAlCarrito = () => {
     if (!articuloEncontrado) return;
     const cant = parseInt(cantidadActual, 10) || 1;
@@ -171,9 +181,37 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
       setCliente("");
       setLineas([]);
       setCodbarraBuscar("");
+      setNombreBuscar("");
+      setSugerenciasNombre([]);
       setArticuloEncontrado(null);
     }
   }, [venta]);
+
+  useEffect(() => {
+    const texto = nombreBuscar.trim();
+    if (!texto || texto.length < 2) {
+      setSugerenciasNombre([]);
+      return;
+    }
+
+    const timer = window.setTimeout(async () => {
+      setBuscandoNombre(true);
+      try {
+        const params = new URLSearchParams();
+        params.set("nombre", texto);
+        const res = await fetch(`/api/articulos/buscar?${params}`);
+        const data = await res.json();
+        const resultados = (data.articulos as ArticuloEncontrado[] | undefined) ?? [];
+        setSugerenciasNombre(resultados);
+      } catch {
+        setSugerenciasNombre([]);
+      } finally {
+        setBuscandoNombre(false);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [nombreBuscar]);
 
   const totalVenta = lineas.reduce((sum, l) => sum + l.total, 0);
 
@@ -316,11 +354,59 @@ export default function FormVentas({ onCerrar, venta, onMutate }: FormVentasProp
             </div>
           </div>
 
+          <div>
+            <label htmlFor="nombreArticulo" className="mb-1 block text-sm font-medium text-slate-700">
+              Buscar artículo por nombre
+            </label>
+            <div className="relative">
+              <input
+                id="nombreArticulo"
+                type="text"
+                value={nombreBuscar}
+                onChange={(e) => setNombreBuscar(e.target.value)}
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-800 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                placeholder="Escribir nombre del artículo"
+              />
+              {(buscandoNombre || sugerenciasNombre.length > 0) && (
+                <div className="absolute z-20 mt-1 max-h-56 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {buscandoNombre ? (
+                    <div className="px-3 py-2 text-sm text-slate-500">Buscando...</div>
+                  ) : (
+                    sugerenciasNombre.map((art) => (
+                      <button
+                        key={art.idarticulo ?? art.id ?? art.nombre}
+                        type="button"
+                        onClick={() => handleSeleccionarSugerencia(art)}
+                        className="block w-full border-b border-slate-100 px-3 py-2 text-left text-sm hover:bg-sky-50 last:border-b-0"
+                      >
+                        <span className="font-medium text-slate-800">{art.nombre}</span>
+                        <span className="ml-2 text-xs text-slate-500">
+                          ({art.idarticulo ?? art.id}) · Stock: {art.stock}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
           {articuloEncontrado && (
             <div className="rounded-lg bg-sky-50 border border-sky-200 px-3 py-3">
-              <p className="text-sm font-medium text-sky-800 mb-1">
-                {articuloEncontrado.nombre}
-              </p>
+              <div className="mb-1 flex items-start justify-between gap-2">
+                <p className="text-sm font-medium text-sky-800">
+                  {articuloEncontrado.nombre}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setArticuloEncontrado(null)}
+                  className="rounded px-1 text-red-600 hover:bg-red-100 hover:text-red-700"
+                  aria-label="Quitar selección de artículo"
+                  title="Quitar selección"
+                >
+                  ✕
+                </button>
+              </div>
               <p className="text-xs text-sky-700 mb-2">
                 Costo: {articuloEncontrado.precio.toLocaleString()}
                 {articuloEncontrado.por_aplic != null && articuloEncontrado.por_aplic !== 0 && (
