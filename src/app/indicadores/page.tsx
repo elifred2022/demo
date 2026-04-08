@@ -2,7 +2,15 @@
 
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
-import { BarChart3, CreditCard, Package, TrendingUp, Users } from "lucide-react";
+import {
+  BarChart3,
+  CreditCard,
+  Download,
+  Package,
+  TrendingUp,
+  Users,
+} from "lucide-react";
+import * as XLSX from "xlsx";
 
 const cardClass =
   "rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md";
@@ -18,6 +26,45 @@ type ArticuloItem = {
 
 type ClienteItem = {
   fechaCreacion?: string;
+  idcliente?: string;
+  nombre?: string;
+  telefono?: string;
+  email?: string;
+  direccion?: string;
+};
+
+type VentaApi = FechaTotalItem & {
+  idventa?: string;
+  cliente?: string;
+  nombre?: string;
+  cantidad?: number;
+  precioUnitario?: number;
+};
+
+type CompraApi = FechaTotalItem & {
+  idcompra?: string;
+  proveedor?: string;
+  articulo?: string;
+  cantidad?: number;
+};
+
+type ArticuloApi = ArticuloItem & {
+  codbarra?: string;
+  idarticulo?: string;
+  nombre?: string;
+  descripcion?: string;
+  precio?: number;
+  por_aplic?: number;
+  precio_venta?: number;
+  stock?: number;
+  categoria?: string;
+};
+
+type DatosFiltradosExport = {
+  ventas: VentaApi[];
+  compras: CompraApi[];
+  articulos: ArticuloApi[];
+  clientes: ClienteItem[];
 };
 
 function parseFecha(raw: string): Date | null {
@@ -64,6 +111,9 @@ export default function IndicadoresPage() {
   const [clientesCreados, setClientesCreados] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [datosFiltrados, setDatosFiltrados] = useState<DatosFiltradosExport | null>(
+    null
+  );
 
   const money = useMemo(
     () =>
@@ -123,48 +173,159 @@ export default function IndicadoresPage() {
           clientesRes.json(),
         ]);
 
-      const ventas: FechaTotalItem[] = Array.isArray(ventasData?.ventas)
+      const ventas: VentaApi[] = Array.isArray(ventasData?.ventas)
         ? ventasData.ventas
         : [];
-      const compras: FechaTotalItem[] = Array.isArray(comprasData?.compras)
+      const compras: CompraApi[] = Array.isArray(comprasData?.compras)
         ? comprasData.compras
         : [];
-      const articulos: ArticuloItem[] = Array.isArray(articulosData?.articulos)
+      const articulos: ArticuloApi[] = Array.isArray(articulosData?.articulos)
         ? articulosData.articulos
         : [];
       const clientes: ClienteItem[] = Array.isArray(clientesData?.clientes)
         ? clientesData.clientes
         : [];
 
-      const sumaVentas = ventas
-        .filter((v) => estaEnRango(String(v.fecha ?? ""), fechaDesde, fechaHasta))
-        .reduce((acc, v) => acc + (Number(v.total) || 0), 0);
-
-      const sumaCompras = compras
-        .filter((c) => estaEnRango(String(c.fecha ?? ""), fechaDesde, fechaHasta))
-        .reduce((acc, c) => acc + (Number(c.total) || 0), 0);
-
-      const totalArticulosCreados = articulos.filter((a) =>
+      const ventasEnRango = ventas.filter((v) =>
+        estaEnRango(String(v.fecha ?? ""), fechaDesde, fechaHasta)
+      );
+      const comprasEnRango = compras.filter((c) =>
+        estaEnRango(String(c.fecha ?? ""), fechaDesde, fechaHasta)
+      );
+      const articulosEnRango = articulos.filter((a) =>
         estaEnRango(String(a.fecha_alta ?? ""), fechaDesde, fechaHasta)
-      ).length;
-
-      const totalClientesCreados = clientes.filter((c) =>
+      );
+      const clientesEnRango = clientes.filter((c) =>
         estaEnRango(String(c.fechaCreacion ?? ""), fechaDesde, fechaHasta)
-      ).length;
+      );
+
+      const sumaVentas = ventasEnRango.reduce(
+        (acc, v) => acc + (Number(v.total) || 0),
+        0
+      );
+      const sumaCompras = comprasEnRango.reduce(
+        (acc, c) => acc + (Number(c.total) || 0),
+        0
+      );
+      const totalArticulosCreados = articulosEnRango.length;
+      const totalClientesCreados = clientesEnRango.length;
 
       setVentasTotal(sumaVentas);
       setComprasTotal(sumaCompras);
       setArticulosCreados(totalArticulosCreados);
       setClientesCreados(totalClientesCreados);
+      setDatosFiltrados({
+        ventas: ventasEnRango,
+        compras: comprasEnRango,
+        articulos: articulosEnRango,
+        clientes: clientesEnRango,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al aplicar filtros");
       setVentasTotal(null);
       setComprasTotal(null);
       setArticulosCreados(null);
       setClientesCreados(null);
+      setDatosFiltrados(null);
     } finally {
       setLoading(false);
     }
+  }
+
+  function descargarExcel() {
+    if (!datosFiltrados || ventasTotal === null || comprasTotal === null) return;
+
+    const balanceVal = ventasTotal - comprasTotal;
+    const resumen = [
+      { concepto: "Periodo", valor: periodoTexto.replace(/^Periodo:\s*/i, "") },
+      { concepto: "Fecha desde", valor: fechaDesde || "(sin filtro)" },
+      { concepto: "Fecha hasta", valor: fechaHasta || "(sin filtro)" },
+      { concepto: "Total ventas", valor: ventasTotal },
+      { concepto: "Total compras", valor: comprasTotal },
+      { concepto: "Artículos creados (cantidad)", valor: articulosCreados ?? 0 },
+      { concepto: "Clientes creados (cantidad)", valor: clientesCreados ?? 0 },
+      { concepto: "Resultado (ventas - compras)", valor: balanceVal },
+    ];
+
+    const ventasRows = datosFiltrados.ventas.map((v) => ({
+      idventa: v.idventa ?? "",
+      fecha: v.fecha ?? "",
+      cliente: v.cliente ?? "",
+      total: Number(v.total) || 0,
+      cantidad: v.cantidad ?? "",
+      precioUnitario: v.precioUnitario ?? "",
+      detalle: v.nombre ?? "",
+    }));
+
+    const comprasRows = datosFiltrados.compras.map((c) => ({
+      idcompra: c.idcompra ?? "",
+      fecha: c.fecha ?? "",
+      proveedor: c.proveedor ?? "",
+      total: Number(c.total) || 0,
+      cantidad: c.cantidad ?? "",
+      detalle: c.articulo ?? "",
+    }));
+
+    const articulosRows = datosFiltrados.articulos.map((a) => ({
+      codbarra: a.codbarra ?? "",
+      idarticulo: a.idarticulo ?? "",
+      nombre: a.nombre ?? "",
+      descripcion: a.descripcion ?? "",
+      precio: a.precio ?? "",
+      por_aplic: a.por_aplic ?? "",
+      precio_venta: a.precio_venta ?? "",
+      stock: a.stock ?? "",
+      categoria: a.categoria ?? "",
+      fecha_alta: a.fecha_alta ?? "",
+    }));
+
+    const clientesRows = datosFiltrados.clientes.map((c) => ({
+      idcliente: c.idcliente ?? "",
+      nombre: c.nombre ?? "",
+      telefono: c.telefono ?? "",
+      email: c.email ?? "",
+      direccion: c.direccion ?? "",
+      fechaCreacion: c.fechaCreacion ?? "",
+    }));
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(resumen),
+      "Resumen"
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      ventasRows.length
+        ? XLSX.utils.json_to_sheet(ventasRows)
+        : XLSX.utils.aoa_to_sheet([["Sin ventas en el período"]]),
+      "Ventas"
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      comprasRows.length
+        ? XLSX.utils.json_to_sheet(comprasRows)
+        : XLSX.utils.aoa_to_sheet([["Sin compras en el período"]]),
+      "Compras"
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      articulosRows.length
+        ? XLSX.utils.json_to_sheet(articulosRows)
+        : XLSX.utils.aoa_to_sheet([["Sin artículos creados en el período"]]),
+      "Articulos"
+    );
+    XLSX.utils.book_append_sheet(
+      wb,
+      clientesRows.length
+        ? XLSX.utils.json_to_sheet(clientesRows)
+        : XLSX.utils.aoa_to_sheet([["Sin clientes creados en el período"]]),
+      "Clientes"
+    );
+
+    const slugDesde = fechaDesde || "todo";
+    const slugHasta = fechaHasta || "todo";
+    XLSX.writeFile(wb, `indicadores_${slugDesde}_${slugHasta}.xlsx`);
   }
 
   return (
@@ -223,9 +384,20 @@ export default function IndicadoresPage() {
               />
             </div>
 
-            <button type="submit" className="btn-primary w-full sm:w-auto">
-              {loading ? "Aplicando..." : "Aplicar filtros"}
-            </button>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <button type="submit" className="btn-primary w-full sm:w-auto">
+                {loading ? "Aplicando..." : "Aplicar filtros"}
+              </button>
+              <button
+                type="button"
+                onClick={descargarExcel}
+                disabled={!datosFiltrados || ventasTotal === null}
+                className="btn-secondary inline-flex w-full items-center justify-center gap-2 sm:w-auto disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download className="size-4 shrink-0" aria-hidden />
+                Descargar Excel
+              </button>
+            </div>
           </form>
           {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
         </div>
