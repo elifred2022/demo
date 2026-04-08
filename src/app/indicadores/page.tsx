@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import {
   BarChart3,
   CreditCard,
   Download,
+  FilterX,
   Package,
   TrendingUp,
   Users,
@@ -114,6 +115,7 @@ export default function IndicadoresPage() {
   const [datosFiltrados, setDatosFiltrados] = useState<DatosFiltradosExport | null>(
     null
   );
+  const cargaSeq = useRef(0);
 
   const money = useMemo(
     () =>
@@ -126,7 +128,9 @@ export default function IndicadoresPage() {
   );
 
   const periodoTexto = useMemo(() => {
-    if (!fechaDesde && !fechaHasta) return "Periodo: todo";
+    if (!fechaDesde && !fechaHasta) {
+      return "Sin filtros: indicá al menos una fecha y aplicá para ver indicadores.";
+    }
     if (fechaDesde && fechaHasta) return `Periodo: ${fechaDesde} a ${fechaHasta}`;
     if (fechaDesde) return `Periodo: desde ${fechaDesde}`;
     return `Periodo: hasta ${fechaHasta}`;
@@ -147,8 +151,21 @@ export default function IndicadoresPage() {
     return "border-red-200 bg-red-50 text-red-800";
   }, [balance]);
 
-  async function aplicarFiltros(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function vaciarResultadosIndicadores() {
+    setVentasTotal(null);
+    setComprasTotal(null);
+    setArticulosCreados(null);
+    setClientesCreados(null);
+    setDatosFiltrados(null);
+  }
+
+  function invalidarCargaEnCurso() {
+    cargaSeq.current += 1;
+    setLoading(false);
+  }
+
+  async function cargarIndicadores(desde: string, hasta: string) {
+    const id = ++cargaSeq.current;
     setLoading(true);
     setError(null);
 
@@ -187,16 +204,16 @@ export default function IndicadoresPage() {
         : [];
 
       const ventasEnRango = ventas.filter((v) =>
-        estaEnRango(String(v.fecha ?? ""), fechaDesde, fechaHasta)
+        estaEnRango(String(v.fecha ?? ""), desde, hasta)
       );
       const comprasEnRango = compras.filter((c) =>
-        estaEnRango(String(c.fecha ?? ""), fechaDesde, fechaHasta)
+        estaEnRango(String(c.fecha ?? ""), desde, hasta)
       );
       const articulosEnRango = articulos.filter((a) =>
-        estaEnRango(String(a.fecha_alta ?? ""), fechaDesde, fechaHasta)
+        estaEnRango(String(a.fecha_alta ?? ""), desde, hasta)
       );
       const clientesEnRango = clientes.filter((c) =>
-        estaEnRango(String(c.fechaCreacion ?? ""), fechaDesde, fechaHasta)
+        estaEnRango(String(c.fechaCreacion ?? ""), desde, hasta)
       );
 
       const sumaVentas = ventasEnRango.reduce(
@@ -210,6 +227,8 @@ export default function IndicadoresPage() {
       const totalArticulosCreados = articulosEnRango.length;
       const totalClientesCreados = clientesEnRango.length;
 
+      if (id !== cargaSeq.current) return;
+
       setVentasTotal(sumaVentas);
       setComprasTotal(sumaCompras);
       setArticulosCreados(totalArticulosCreados);
@@ -221,15 +240,31 @@ export default function IndicadoresPage() {
         clientes: clientesEnRango,
       });
     } catch (err) {
+      if (id !== cargaSeq.current) return;
       setError(err instanceof Error ? err.message : "Error al aplicar filtros");
-      setVentasTotal(null);
-      setComprasTotal(null);
-      setArticulosCreados(null);
-      setClientesCreados(null);
-      setDatosFiltrados(null);
+      vaciarResultadosIndicadores();
     } finally {
-      setLoading(false);
+      if (id === cargaSeq.current) setLoading(false);
     }
+  }
+
+  async function aplicarFiltros(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!fechaDesde.trim() && !fechaHasta.trim()) {
+      invalidarCargaEnCurso();
+      vaciarResultadosIndicadores();
+      setError("Indicá al menos una fecha (desde o hasta).");
+      return;
+    }
+    await cargarIndicadores(fechaDesde, fechaHasta);
+  }
+
+  function limpiarFiltros() {
+    invalidarCargaEnCurso();
+    setFechaDesde("");
+    setFechaHasta("");
+    setError(null);
+    vaciarResultadosIndicadores();
   }
 
   function descargarExcel() {
@@ -384,17 +419,28 @@ export default function IndicadoresPage() {
               />
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-              <button type="submit" className="btn-primary w-full sm:w-auto">
+            <div className="col-span-full flex flex-row flex-wrap items-end gap-2 sm:col-span-2">
+              <button
+                type="submit"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-sky-500 px-3 text-sm font-medium text-white transition-colors hover:bg-sky-600 active:scale-[0.98]"
+              >
                 {loading ? "Aplicando..." : "Aplicar filtros"}
+              </button>
+              <button
+                type="button"
+                onClick={limpiarFiltros}
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-3 text-sm font-medium text-sky-900 transition-colors hover:border-sky-300 hover:bg-sky-100"
+              >
+                <FilterX className="size-3.5 shrink-0" aria-hidden />
+                Limpiar filtro
               </button>
               <button
                 type="button"
                 onClick={descargarExcel}
                 disabled={!datosFiltrados || ventasTotal === null}
-                className="btn-secondary inline-flex w-full items-center justify-center gap-2 sm:w-auto disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full bg-emerald-600 px-3 text-sm font-medium text-white transition-colors hover:bg-emerald-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <Download className="size-4 shrink-0" aria-hidden />
+                <Download className="size-3.5 shrink-0" aria-hidden />
                 Descargar Excel
               </button>
             </div>

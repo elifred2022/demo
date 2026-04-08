@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import * as XLSX from "xlsx";
 import type { Articulo } from "@/lib/google-sheets";
 import FormArticulos from "./FormArticulos";
 
@@ -64,6 +65,29 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
     }
   }
 
+  function descargarExcel() {
+    if (articulos.length === 0) {
+      alert("No hay artículos para exportar.");
+      return;
+    }
+    const filas = articulos.map((art) => ({
+      "Cod barra": art.codbarra,
+      "ID artículo": art.idarticulo,
+      Nombre: art.nombre,
+      Descripción: art.descripcion ?? "",
+      "Fecha alta": art.fecha_alta ?? "",
+      Precio: art.precio,
+      "Por aplic": art.por_aplic,
+      "Precio venta": art.precio_venta,
+      Stock: art.stock,
+      Categoría: art.categoria ?? "",
+    }));
+    const hoja = XLSX.utils.json_to_sheet(filas);
+    const libro = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(libro, hoja, "Artículos");
+    XLSX.writeFile(libro, `articulos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 p-4 sm:p-6 lg:p-8">
       <div className="mx-auto max-w-5xl">
@@ -74,13 +98,22 @@ export default function ListaArticulos({ articulos, onMutate }: ListaArticulosPr
           <h1 className="text-xl sm:text-2xl font-semibold text-slate-800">
             Lista de artículos
           </h1>
-          <button
-            type="button"
-            onClick={abrirCrear}
-            className="btn-primary w-fit"
-          >
-            + Crear artículo
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={descargarExcel}
+              className="w-fit rounded-lg bg-emerald-600 px-4 py-2 text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-1"
+            >
+              Descargar Excel
+            </button>
+            <button
+              type="button"
+              onClick={abrirCrear}
+              className="btn-primary w-fit"
+            >
+              + Crear artículo
+            </button>
+          </div>
         </div>
         {mostrarForm && (
           <FormArticulos
